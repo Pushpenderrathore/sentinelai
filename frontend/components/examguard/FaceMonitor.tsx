@@ -57,13 +57,11 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
     async function loadMediaPipe() {
       try {
         const { ObjectDetector, FilesetResolver } = await import("@mediapipe/tasks-vision")
-        const vision = await FilesetResolver.forVisionTasks(
-          `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm`,
-        )
+        // Use locally bundled WASM + model — no CDN round-trip
+        const vision = await FilesetResolver.forVisionTasks("/mediapipe/wasm")
         mpDetectorRef.current = await ObjectDetector.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath:
-              "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite",
+            modelAssetPath: "/mediapipe/efficientdet_lite0.tflite",
             delegate: "GPU",
           },
           scoreThreshold: 0.3,
