@@ -8,9 +8,28 @@ function detectScanType(url: string): "github" | "website" | null {
   if (!url.trim()) return null
   try {
     const parsed = new URL(url.startsWith("http") ? url : `https://${url}`)
-    return parsed.hostname === "github.com" ? "github" : "website"
+    if (parsed.hostname === "github.com") {
+      // Must have owner/repo path (at least 2 non-empty segments)
+      const segments = parsed.pathname.split("/").filter(Boolean)
+      return segments.length >= 2 ? "github" : null
+    }
+    return "website"
   } catch {
     return null
+  }
+}
+
+function getValidationError(url: string): string | null {
+  if (!url.trim()) return null
+  try {
+    const parsed = new URL(url.startsWith("http") ? url : `https://${url}`)
+    if (parsed.hostname === "github.com") {
+      const segments = parsed.pathname.split("/").filter(Boolean)
+      if (segments.length < 2) return "Enter a full GitHub repo URL (e.g. github.com/owner/repo)"
+    }
+    return null
+  } catch {
+    return "Invalid URL"
   }
 }
 
@@ -36,12 +55,13 @@ export default function ScanPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState("")
 
-  const scanType = detectScanType(url)
-  const agents   = scanType === "website" ? WEBSITE_AGENTS : GITHUB_AGENTS
+  const scanType      = detectScanType(url)
+  const validationErr = getValidationError(url)
+  const agents        = scanType === "website" ? WEBSITE_AGENTS : GITHUB_AGENTS
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!url.trim()) return
+    if (!url.trim() || validationErr) return
     setLoading(true)
     setError("")
     try {
@@ -119,11 +139,12 @@ export default function ScanPage() {
             )}
           </div>
 
+          {validationErr && <p className="text-yellow-400 text-sm px-1">{validationErr}</p>}
           {error && <p className="text-sentinel-red text-sm px-1">{error}</p>}
 
           <button
             type="submit"
-            disabled={loading || !url.trim()}
+            disabled={loading || !url.trim() || !!validationErr}
             className="w-full py-3.5 rounded-xl font-medium text-sm
                        bg-sentinel-cyan text-black
                        hover:bg-sentinel-cyan/90 active:scale-[0.98]
