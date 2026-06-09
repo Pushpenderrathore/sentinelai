@@ -35,8 +35,8 @@ interface ShuffledMCQ extends MCQ {
   correctShuffled: number
 }
 
-function prepareQuestions(bank: SubjectBank): ShuffledMCQ[] {
-  return shuffle(bank.questions).map((q) => {
+function prepareQuestions(bank: SubjectBank, count = 10): ShuffledMCQ[] {
+  return shuffle(bank.questions).slice(0, count).map((q) => {
     const indexed = q.options.map((opt, i) => ({ opt, isCorrect: i === q.correct }))
     const shuffled = shuffle(indexed)
     return {
@@ -273,7 +273,7 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
                   <p className="text-xs font-semibold text-slate-700 group-hover:text-indigo-700 leading-tight">
                     {sub.label}
                   </p>
-                  <p className="text-[10px] text-slate-400 mt-1">{sub.questions.length} questions · MCQ</p>
+                  <p className="text-[10px] text-slate-400 mt-1">{sub.questions.length} Qs · 10 per session · MCQ</p>
                 </div>
               </button>
             ))}
