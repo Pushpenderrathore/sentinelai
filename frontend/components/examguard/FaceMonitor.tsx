@@ -116,29 +116,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active, sendFra
           void vw  // suppress unused var warning
         }
 
-        // ── Draw face boxes ───────────────────────────
-        if (canvasRef.current && videoRef.current) {
-          const dims = {
-            width:  videoRef.current.videoWidth  || 640,
-            height: videoRef.current.videoHeight || 480,
-          }
-          faceapi.matchDimensions(canvasRef.current, dims)
-          const resized = faceapi.resizeResults(detections, dims)
-          const ctx = canvasRef.current.getContext("2d")
-          if (ctx) {
-            ctx.clearRect(0, 0, dims.width, dims.height)
-            resized.forEach((d) => {
-              const { x, y, width, height } = d.box
-              const color = count === 1 ? "#22d3ee" : count === 0 ? "#f87171" : "#fb923c"
-              ctx.strokeStyle = color
-              ctx.lineWidth   = 2
-              ctx.strokeRect(x, y, width, height)
-              ctx.fillStyle = color
-              ctx.font = "11px monospace"
-              ctx.fillText(`${(d.score * 100).toFixed(0)}%`, x + 4, y - 4)
-            })
-          }
-        }
+        // Canvas is kept but left clear — no boxes drawn over the face
       } catch (e) {
         console.warn("[FaceMonitor] detection frame failed:", e)
       }
