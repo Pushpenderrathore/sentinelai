@@ -299,19 +299,16 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
         </div>
       </main>
 
-      {/* Warning banner — top-right corner, away from question area and camera */}
+      {/* Warning banner — escalates as tab count approaches limit */}
       {tabCount > 0 && (
-        <div className={`fixed top-20 right-4 max-w-xs flex items-start gap-2
+        <div className={`fixed bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2
                         text-xs rounded-xl px-4 py-2.5 shadow-lg z-50 transition-colors
                         ${tabCount >= TAB_LIMIT - 1
                           ? "bg-red-50 border border-red-400 text-red-700 font-semibold"
                           : "bg-yellow-50 border border-yellow-300 text-yellow-800"}`}>
-          <span className="mt-0.5 shrink-0">{tabCount >= TAB_LIMIT - 1 ? "⚠️" : "⚠"}</span>
-          <span>
-            {tabCount >= TAB_LIMIT - 1
-              ? `WARNING: ${tabCount}/${TAB_LIMIT} tab switches — one more will terminate your exam!`
-              : `Tab switching detected (${tabCount}×) — this session is being monitored.`}
-          </span>
+          {tabCount >= TAB_LIMIT - 1
+            ? `WARNING: ${tabCount}/${TAB_LIMIT} tab switches — one more will terminate your exam!`
+            : `Tab switching detected (${tabCount}×) — this session is being monitored.`}
         </div>
       )}
     </div>
