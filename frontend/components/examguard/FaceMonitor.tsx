@@ -209,7 +209,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active, sendFra
         )}
 
         {streaming && (
-          <div className="absolute top-2 right-2 flex items-center gap-1.5 bg-black/60 rounded-full px-2 py-1">
+          <div className="absolute bottom-2 right-2 flex items-center gap-1.5 bg-black/60 rounded-full px-2 py-1">
             <span className="w-1.5 h-1.5 rounded-full bg-sentinel-green animate-pulse" />
             <span className="text-[10px] font-mono text-sentinel-green">LIVE</span>
           </div>
