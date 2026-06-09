@@ -17,6 +17,8 @@ const COLOR_MAP: Record<string, { badge: string; border: string; bg: string; tex
   teal:    { badge: "bg-teal-100 text-teal-700",      border: "border-teal-300",    bg: "bg-teal-50",    text: "text-teal-700"    },
   orange:  { badge: "bg-orange-100 text-orange-700",  border: "border-orange-300",  bg: "bg-orange-50",  text: "text-orange-700"  },
   emerald: { badge: "bg-emerald-100 text-emerald-700",border: "border-emerald-300", bg: "bg-emerald-50", text: "text-emerald-700" },
+  rose:    { badge: "bg-rose-100 text-rose-700",    border: "border-rose-300",    bg: "bg-rose-50",    text: "text-rose-700"    },
+  sky:     { badge: "bg-sky-100 text-sky-700",      border: "border-sky-300",     bg: "bg-sky-50",     text: "text-sky-700"     },
 }
 
 function shuffle<T>(arr: T[]): T[] {

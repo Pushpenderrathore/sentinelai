@@ -120,6 +120,36 @@ export const QUESTION_BANK: SubjectBank[] = [
     ],
   },
   {
+    id: "ceh", label: "CEH — Ethical Hacking", icon: "🕵️", color: "rose",
+    questions: [
+      { id: "ceh1",  text: "Which phase of ethical hacking involves gathering information about the target without directly interacting with it?", options: ["Passive Reconnaissance", "Active Reconnaissance", "Scanning", "Exploitation"], correct: 0 },
+      { id: "ceh2",  text: "What tool is commonly used for network scanning and host discovery in ethical hacking?", options: ["Nmap", "Metasploit", "Wireshark", "Burp Suite"], correct: 0 },
+      { id: "ceh3",  text: "Which type of SQL injection attack retrieves data by asking the database true/false questions?", options: ["Blind Boolean-based SQLi", "Error-based SQLi", "Union-based SQLi", "Out-of-band SQLi"], correct: 0 },
+      { id: "ceh4",  text: "What is the purpose of a reverse shell in penetration testing?", options: ["Make the target machine connect back to the attacker's machine", "Inject code into a running process", "Capture network packets", "Crack password hashes"], correct: 0 },
+      { id: "ceh5",  text: "Which framework provides a comprehensive library of exploits and payloads for penetration testing?", options: ["Metasploit", "Nessus", "Nmap", "Aircrack-ng"], correct: 0 },
+      { id: "ceh6",  text: "What attack technique involves sending forged ARP messages to link the attacker's MAC to a legitimate IP address?", options: ["ARP Poisoning", "DNS Spoofing", "IP Spoofing", "Session Hijacking"], correct: 0 },
+      { id: "ceh7",  text: "Which password attack tries every possible combination of characters?", options: ["Brute Force", "Dictionary Attack", "Rainbow Table Attack", "Credential Stuffing"], correct: 0 },
+      { id: "ceh8",  text: "What is a 'pivot' in the context of penetration testing?", options: ["Using a compromised system to attack other systems in the network", "Escalating privileges on a compromised machine", "Hiding malware in a legitimate process", "Intercepting encrypted traffic"], correct: 0 },
+      { id: "ceh9",  text: "Which OWASP vulnerability category refers to broken access control?", options: ["A01:2021", "A03:2021", "A07:2021", "A09:2021"], correct: 0 },
+      { id: "ceh10", text: "What is the difference between a vulnerability scanner and a penetration test?", options: ["A scanner identifies weaknesses automatically; a pentest actively exploits them", "A pentest is automated; a scanner is manual", "They are the same thing", "A scanner is more thorough than a pentest"], correct: 0 },
+    ],
+  },
+  {
+    id: "comptia", label: "CompTIA Security+", icon: "🛡️", color: "sky",
+    questions: [
+      { id: "sec1",  text: "Which type of malware disguises itself as legitimate software to trick users into installing it?", options: ["Trojan Horse", "Worm", "Ransomware", "Rootkit"], correct: 0 },
+      { id: "sec2",  text: "What is multi-factor authentication (MFA)?", options: ["Using two or more verification factors from different categories", "Using two passwords for the same account", "Logging in from multiple devices simultaneously", "Requiring biometrics only"], correct: 0 },
+      { id: "sec3",  text: "Which encryption standard replaced DES and uses 128, 192, or 256-bit keys?", options: ["AES", "RSA", "3DES", "RC4"], correct: 0 },
+      { id: "sec4",  text: "What is the principle of least privilege?", options: ["Users should have only the minimum access required to perform their job", "Administrators should have no restrictions", "All users should have equal access rights", "Privileged accounts should never be used"], correct: 0 },
+      { id: "sec5",  text: "Which attack uses deception to manipulate people into revealing confidential information?", options: ["Social Engineering", "Brute Force", "Man-in-the-Middle", "Zero-Day Exploit"], correct: 0 },
+      { id: "sec6",  text: "What does a SIEM system do?", options: ["Aggregates and analyses security events from across the network in real time", "Blocks malicious traffic at the network perimeter", "Encrypts data in transit between endpoints", "Manages user identity and access permissions"], correct: 0 },
+      { id: "sec7",  text: "Which concept describes ensuring that a user cannot deny having performed an action?", options: ["Non-repudiation", "Confidentiality", "Integrity", "Availability"], correct: 0 },
+      { id: "sec8",  text: "What type of attack exploits a vulnerability on the same day it is discovered, before a patch is available?", options: ["Zero-Day Attack", "Replay Attack", "Insider Threat", "Supply Chain Attack"], correct: 0 },
+      { id: "sec9",  text: "What is the purpose of a DMZ (Demilitarised Zone) in network security?", options: ["Isolate public-facing servers from the internal network", "Encrypt all internal network traffic", "Provide VPN access for remote users", "Monitor and log all DNS queries"], correct: 0 },
+      { id: "sec10", text: "Which type of backup only copies data that has changed since the last full backup?", options: ["Incremental Backup", "Differential Backup", "Full Backup", "Mirror Backup"], correct: 0 },
+    ],
+  },
+  {
     id: "se", label: "Software Engineering", icon: "📐", color: "emerald",
     questions: [
       { id: "se1",  text: "Which software development model delivers working software in short iterations?", options: ["Agile", "Waterfall", "V-Model", "Spiral"], correct: 0 },
