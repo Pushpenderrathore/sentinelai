@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import FaceMonitor from "@/components/examguard/FaceMonitor"
 import { useWebSocket } from "@/lib/ws"
+import { getExamSession } from "@/lib/api"
 
 const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000"
 
@@ -29,12 +30,17 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
 
   const [currentQ,    setCurrentQ]    = useState(0)
   const [answers,     setAnswers]     = useState<Record<number, string>>({})
-  const [timeLeft,    setTimeLeft]    = useState(60 * 60)   // 60 min in seconds
+  const [timeLeft,    setTimeLeft]    = useState(60 * 60)
   const [tabCount,    setTabCount]    = useState(0)
   const [submitted,   setSubmitted]   = useState(false)
   const [terminated,  setTerminated]  = useState(false)
 
   const TAB_LIMIT = 5
+
+  // Fetch real duration from session on mount
+  useEffect(() => {
+    getExamSession(examId).then((s) => setTimeLeft(s.duration_minutes * 60)).catch(() => {})
+  }, [examId])
 
   const lastKeystroke = useRef<number>(Date.now())
   const keystrokeCount = useRef(0)

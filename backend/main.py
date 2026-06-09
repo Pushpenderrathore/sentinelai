@@ -338,6 +338,21 @@ async def create_exam_session(req: ExamSessionRequest) -> ExamSessionResponse:
     return ExamSessionResponse(exam_id=exam_id, ws_url=f"/ws/exam/{exam_id}", status="active")
 
 
+@app.get("/api/exam/session/{exam_id}")
+async def get_exam_session(exam_id: str) -> dict:
+    entry = _exam_sessions.get(exam_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Exam session not found")
+    s = entry["session"]
+    return {
+        "exam_id":          exam_id,
+        "student_name":     s["student_name"],
+        "exam_name":        s["exam_name"],
+        "duration_minutes": s["duration_minutes"],
+        "status":           s["status"],
+    }
+
+
 @app.post("/api/exam/{exam_id}/analyze", status_code=202)
 async def trigger_analysis(exam_id: str) -> dict:
     entry = _exam_sessions.get(exam_id)

@@ -39,6 +39,11 @@ export const createExamSession = (data: {
     body: JSON.stringify(data),
   })
 
+export const getExamSession = (exam_id: string) =>
+  req<{ exam_id: string; student_name: string; exam_name: string; duration_minutes: number; status: string }>(
+    `/api/exam/session/${exam_id}`,
+  )
+
 export const triggerAnalysis = (exam_id: string) =>
   req<{ exam_id: string; status: string; ws_url: string }>(`/api/exam/${exam_id}/analyze`, {
     method: "POST",
