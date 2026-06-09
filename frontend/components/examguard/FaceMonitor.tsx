@@ -31,6 +31,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
   const [modelStatus,  setModelStatus]  = useState<ModelStatus>("loading")
   const [faceCount,    setFaceCount]    = useState<number | null>(null)
   const [phoneVisible, setPhoneVisible] = useState(false)
+  const [cocoReady,    setCocoReady]    = useState(false)
 
   // ── Load face-api once ─────────────────────────────────────
   useEffect(() => {
@@ -57,15 +58,16 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
 
     async function loadCoco() {
       try {
-        // Ensure a tf backend is ready before loading the model
         const tf      = await import("@tensorflow/tfjs")
         await tf.ready()
         const cocoSsd = await import("@tensorflow-models/coco-ssd")
-        cocoRef.current = await cocoSsd.load({ base: "mobilenet_v2" })
-        console.log("[PhoneDetect] COCO-SSD ready")
+        // mobilenet_v1 is ~28 MB vs 60 MB for v2 — faster to load
+        cocoRef.current = await cocoSsd.load({ base: "mobilenet_v1" })
+        setCocoReady(true)
+        console.log("[PhoneDetect] COCO-SSD (mobilenet_v1) ready")
       } catch (e) {
         console.error("[PhoneDetect] COCO-SSD load failed:", e)
-        cocoLoadingRef.current = false   // allow retry on next render
+        cocoLoadingRef.current = false
       }
     }
     loadCoco()
@@ -117,8 +119,10 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
         let phones: { bbox: [number, number, number, number]; score: number }[] = []
         if (cocoRef.current && videoRef.current) {
           try {
-            const objects = await cocoRef.current.detect(videoRef.current)
+            // minScore 0.3 — lower threshold catches phones at an angle or in poor lighting
+            const objects = await cocoRef.current.detect(videoRef.current, 20, 0.3)
             phones = objects.filter((o: { class: string; bbox: [number,number,number,number]; score: number }) => o.class === "cell phone")
+            if (phones.length > 0) console.log("[PhoneDetect] phone detected, confidence:", phones[0].score.toFixed(2))
             if (phones.length > 0) {
               const best = Math.max(...phones.map((p) => p.score))
               setPhoneVisible(true)
@@ -239,6 +243,13 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
         {streaming && faceCount !== null && (
           <div className="absolute bottom-2 left-2 bg-black/60 rounded-full px-2 py-1">
             <span className={`text-[10px] font-mono ${faceStatusColor}`}>{faceStatusText}</span>
+          </div>
+        )}
+
+        {/* Phone AI status — shown when model is loading or a phone is detected */}
+        {streaming && !cocoReady && (
+          <div className="absolute bottom-2 right-2 bg-black/60 rounded-full px-2 py-1">
+            <span className="text-[10px] font-mono text-yellow-400">📱 loading…</span>
           </div>
         )}
 

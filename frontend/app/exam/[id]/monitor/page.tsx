@@ -28,6 +28,7 @@ export default function InvigilatorMonitor({ params }: { params: { id: string } 
   const [verdict,      setVerdict]      = useState("CLEAN")
   const [analysing,    setAnalysing]    = useState(false)
   const [analysisWsUrl, setAnalysisWsUrl] = useState<string | null>(null)
+  const [phoneCount,   setPhoneCount]   = useState(0)
 
   // ── Monitor socket (server fans out alerts to invigilator) ──
   const { status: eventStatus } = useWebSocket(
@@ -35,6 +36,11 @@ export default function InvigilatorMonitor({ params }: { params: { id: string } 
     (msg) => {
       if (msg.type === "immediate_alert") {
         setAlerts((prev) => [msg as unknown as Alert, ...prev])
+
+        // Increment phone counter directly when a phone alert arrives
+        if ((msg as Alert).title?.toLowerCase().includes("phone")) {
+          setPhoneCount((n) => n + 1)
+        }
 
         // Degrade score on alerts
         setScore((s) => {
@@ -182,7 +188,7 @@ export default function InvigilatorMonitor({ params }: { params: { id: string } 
             {[
               { label: "Tab Switches",  value: report ? report.raw_stats.tab_blur_count   : alerts.filter((a) => a.title?.toLowerCase().includes("tab")).length },
               { label: "Face Absences", value: report ? report.raw_stats.face_absent_count : alerts.filter((a) => a.title?.toLowerCase().includes("face")).length },
-              { label: "Phone Detected", value: alerts.filter((a) => a.title?.toLowerCase().includes("phone")).length },
+              { label: "Phone Detected", value: phoneCount },
               { label: "Copy-Paste",    value: report ? report.raw_stats.copy_paste_count  : alerts.filter((a) => a.title?.toLowerCase().includes("copy")).length },
               { label: "Total Alerts",  value: alerts.length },
             ].map(({ label, value }) => (
