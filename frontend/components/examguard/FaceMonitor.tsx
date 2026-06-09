@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 
 interface Props {
-  onFaceEvent:  (faceCount: number, confidence: number) => void
+  onFaceEvent:   (faceCount: number, confidence: number) => void
   onPhoneEvent?: (confidence: number) => void
   active: boolean
 }
@@ -15,35 +15,63 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
   const canvasRef   = useRef<HTMLCanvasElement>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Persistent refs — survive effect re-runs caused by callback identity changes
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cocoRef         = useRef<any>(null)
+  const cocoLoadingRef  = useRef(false)
+  const onPhoneEventRef = useRef(onPhoneEvent)
+  const onFaceEventRef  = useRef(onFaceEvent)
+
+  // Keep callback refs current without re-running effects
+  useEffect(() => { onPhoneEventRef.current = onPhoneEvent }, [onPhoneEvent])
+  useEffect(() => { onFaceEventRef.current  = onFaceEvent  }, [onFaceEvent])
+
   const [camError,     setCamError]     = useState<string | null>(null)
   const [streaming,    setStreaming]     = useState(false)
   const [modelStatus,  setModelStatus]  = useState<ModelStatus>("loading")
   const [faceCount,    setFaceCount]    = useState<number | null>(null)
   const [phoneVisible, setPhoneVisible] = useState(false)
 
-  // Load face-api + coco-ssd models once
+  // ── Load face-api once ─────────────────────────────────────
   useEffect(() => {
     if (!active) return
     let cancelled = false
-
-    async function loadModels() {
+    async function loadFace() {
       try {
         const faceapi = await import("@vladmandic/face-api")
         await faceapi.nets.tinyFaceDetector.loadFromUri("/models")
-        // Load coco-ssd (lazy — doesn't block face detection)
-        await import("@tensorflow-models/coco-ssd")
         if (!cancelled) setModelStatus("ready")
       } catch (e) {
-        console.error("model load failed:", e)
+        console.error("[FaceMonitor] face-api load failed:", e)
         if (!cancelled) setModelStatus("error")
       }
     }
-
-    loadModels()
+    loadFace()
     return () => { cancelled = true }
   }, [active])
 
-  // Start webcam once model is ready
+  // ── Load coco-ssd once (separate effect, detector stored in ref) ──
+  useEffect(() => {
+    if (!active || cocoRef.current || cocoLoadingRef.current) return
+    cocoLoadingRef.current = true
+
+    async function loadCoco() {
+      try {
+        // Ensure a tf backend is ready before loading the model
+        const tf      = await import("@tensorflow/tfjs")
+        await tf.ready()
+        const cocoSsd = await import("@tensorflow-models/coco-ssd")
+        cocoRef.current = await cocoSsd.load({ base: "mobilenet_v2" })
+        console.log("[PhoneDetect] COCO-SSD ready")
+      } catch (e) {
+        console.error("[PhoneDetect] COCO-SSD load failed:", e)
+        cocoLoadingRef.current = false   // allow retry on next render
+      }
+    }
+    loadCoco()
+  }, [active])
+
+  // ── Start webcam once face model is ready ─────────────────
   useEffect(() => {
     if (!active || modelStatus !== "ready") return
     let stream: MediaStream | null = null
@@ -66,48 +94,44 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
     }
   }, [active, modelStatus])
 
-  // Run detection every 3 s once streaming
+  // ── Detection loop — deps use refs, not callbacks ─────────
   useEffect(() => {
     if (!streaming || modelStatus !== "ready") return
 
-    // Load coco-ssd detector once and reuse
-    let cocoDetector: Awaited<ReturnType<typeof import("@tensorflow-models/coco-ssd")["load"]>> | null = null
-    import("@tensorflow-models/coco-ssd").then((m) => m.load()).then((d) => { cocoDetector = d })
-
     async function detect() {
       if (!videoRef.current) return
-
       try {
-        // ── Face detection ──────────────────────────────────────
         const faceapi = await import("@vladmandic/face-api")
+
+        // ── Face detection ──────────────────────────────
         const detections = await faceapi.detectAllFaces(
           videoRef.current,
-          new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })
+          new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 }),
         )
-
-        const count = detections.length
-        const bestScore = count > 0
-          ? Math.max(...detections.map((d) => d.score))
-          : 0
-
+        const count     = detections.length
+        const bestScore = count > 0 ? Math.max(...detections.map((d) => d.score)) : 0
         setFaceCount(count)
-        onFaceEvent(count, parseFloat(bestScore.toFixed(2)))
+        onFaceEventRef.current(count, parseFloat(bestScore.toFixed(2)))
 
-        // ── Phone detection ─────────────────────────────────────
-        let phoneScore = 0
-        if (cocoDetector) {
-          const objects = await cocoDetector.detect(videoRef.current)
-          const phones  = objects.filter((o) => o.class === "cell phone")
-          if (phones.length > 0) {
-            phoneScore = Math.max(...phones.map((p) => p.score))
-            setPhoneVisible(true)
-            if (onPhoneEvent) onPhoneEvent(parseFloat(phoneScore.toFixed(2)))
-          } else {
-            setPhoneVisible(false)
+        // ── Phone detection (single pass) ───────────────
+        let phones: { bbox: [number, number, number, number]; score: number }[] = []
+        if (cocoRef.current && videoRef.current) {
+          try {
+            const objects = await cocoRef.current.detect(videoRef.current)
+            phones = objects.filter((o: { class: string; bbox: [number,number,number,number]; score: number }) => o.class === "cell phone")
+            if (phones.length > 0) {
+              const best = Math.max(...phones.map((p) => p.score))
+              setPhoneVisible(true)
+              onPhoneEventRef.current?.(parseFloat(best.toFixed(2)))
+            } else {
+              setPhoneVisible(false)
+            }
+          } catch (e) {
+            console.warn("[PhoneDetect] detect() error:", e)
           }
         }
 
-        // ── Draw bounding boxes ─────────────────────────────────
+        // ── Draw bounding boxes ─────────────────────────
         if (canvasRef.current && videoRef.current) {
           const dims = {
             width:  videoRef.current.videoWidth  || 320,
@@ -118,8 +142,6 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
           const ctx = canvasRef.current.getContext("2d")
           if (ctx) {
             ctx.clearRect(0, 0, dims.width, dims.height)
-
-            // Face boxes
             resized.forEach((d) => {
               const { x, y, width, height } = d.box
               const color = count === 1 ? "#22d3ee" : count === 0 ? "#f87171" : "#fb923c"
@@ -130,38 +152,31 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
               ctx.font = "11px monospace"
               ctx.fillText(`${(d.score * 100).toFixed(0)}%`, x + 4, y - 4)
             })
-
-            // Phone boxes (red)
-            if (cocoDetector) {
-              const objects = await cocoDetector.detect(videoRef.current)
-              objects
-                .filter((o) => o.class === "cell phone")
-                .forEach(({ bbox }) => {
-                  const [x, y, w, h] = bbox
-                  ctx.strokeStyle = "#ef4444"
-                  ctx.lineWidth   = 2
-                  ctx.strokeRect(x, y, w, h)
-                  ctx.fillStyle = "#ef4444"
-                  ctx.font = "11px monospace"
-                  ctx.fillText("📱 phone", x + 4, y - 4)
-                })
-            }
+            // Phone boxes (reuse results from detection pass above)
+            phones.forEach(({ bbox }) => {
+              const [x, y, w, h] = bbox
+              ctx.strokeStyle = "#ef4444"
+              ctx.lineWidth   = 2
+              ctx.strokeRect(x, y, w, h)
+              ctx.fillStyle = "#ef4444"
+              ctx.font = "bold 11px monospace"
+              ctx.fillText("PHONE", x + 4, y - 4)
+            })
           }
         }
       } catch (e) {
-        console.warn("Detection frame failed:", e)
+        console.warn("[FaceMonitor] detection frame failed:", e)
       }
     }
 
     intervalRef.current = setInterval(detect, 3000)
     detect()
-
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [streaming, modelStatus, onFaceEvent, onPhoneEvent])
+  }, [streaming, modelStatus])   // ← no callbacks in deps; use refs instead
 
-  // ── Render ───────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────
 
   if (camError) {
     return (
@@ -193,7 +208,6 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
           playsInline
           className="w-full h-full object-cover scale-x-[-1]"
         />
-
         <canvas
           ref={canvasRef}
           className="absolute inset-0 w-full h-full scale-x-[-1] pointer-events-none"
@@ -228,7 +242,6 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
           </div>
         )}
 
-        {/* Phone warning badge */}
         {streaming && phoneVisible && (
           <div className="absolute top-2 left-2 bg-red-600/90 rounded-full px-2 py-1 animate-pulse">
             <span className="text-[10px] font-mono text-white">📱 PHONE</span>
