@@ -27,22 +27,33 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
 
   const { status, send } = useWebSocket(wsUrl)
 
-  const [currentQ,  setCurrentQ]  = useState(0)
-  const [answers,   setAnswers]   = useState<Record<number, string>>({})
-  const [timeLeft,  setTimeLeft]  = useState(60 * 60)   // 60 min in seconds
-  const [tabCount,  setTabCount]  = useState(0)
-  const [submitted, setSubmitted] = useState(false)
+  const [currentQ,    setCurrentQ]    = useState(0)
+  const [answers,     setAnswers]     = useState<Record<number, string>>({})
+  const [timeLeft,    setTimeLeft]    = useState(60 * 60)   // 60 min in seconds
+  const [tabCount,    setTabCount]    = useState(0)
+  const [submitted,   setSubmitted]   = useState(false)
+  const [terminated,  setTerminated]  = useState(false)
+
+  const TAB_LIMIT = 5
 
   const lastKeystroke = useRef<number>(Date.now())
   const keystrokeCount = useRef(0)
   const wpmSamples    = useRef<number[]>([])
 
+  // ── Auto-terminate on tab limit ───────────────────────────
+  useEffect(() => {
+    if (tabCount >= TAB_LIMIT && !submitted && !terminated) {
+      send({ type: "end_exam", timestamp: Date.now() / 1000 })
+      setTerminated(true)
+    }
+  }, [tabCount, submitted, terminated, send])
+
   // ── Countdown ────────────────────────────────────────────
   useEffect(() => {
-    if (submitted) return
+    if (submitted || terminated) return
     const t = setInterval(() => setTimeLeft((s) => Math.max(0, s - 1)), 1000)
     return () => clearInterval(t)
-  }, [submitted])
+  }, [submitted, terminated])
 
   function formatTime(s: number) {
     const h = Math.floor(s / 3600)
@@ -54,7 +65,7 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
 
   // ── Tab visibility tracking ───────────────────────────────
   useEffect(() => {
-    if (submitted || status !== "open") return
+    if (submitted || terminated || status !== "open") return
 
     function onVisibilityChange() {
       const ts = Date.now() / 1000
@@ -73,7 +84,7 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
       document.removeEventListener("visibilitychange", onVisibilityChange)
       window.removeEventListener("blur", onBlur)
     }
-  }, [status, submitted, send])
+  }, [status, submitted, terminated, send])
 
   // ── Keystroke tracking ────────────────────────────────────
   function handleKeydown() {
@@ -126,6 +137,27 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
   function handleSubmit() {
     send({ type: "end_exam", timestamp: Date.now() / 1000 })
     setSubmitted(true)
+  }
+
+  if (terminated) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center text-center px-6 bg-[#f8f9fc]">
+        <div className="w-16 h-16 rounded-full bg-red-100 border-2 border-red-400 flex items-center justify-center mb-5">
+          <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+          </svg>
+        </div>
+        <h2 className="text-2xl font-bold text-red-600 mb-2">Exam Terminated</h2>
+        <p className="text-slate-600 text-sm max-w-sm leading-relaxed">
+          Your exam has been automatically terminated due to <strong>repeated tab switching ({TAB_LIMIT}+ times)</strong>.
+          This session has been flagged and the invigilator has been notified.
+        </p>
+        <div className="mt-5 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 max-w-sm">
+          Tab switches detected: <strong>{tabCount}</strong> — limit is {TAB_LIMIT}
+        </div>
+        <p className="mt-5 text-xs font-mono text-slate-400">Session: {examId}</p>
+      </div>
+    )
   }
 
   if (submitted) {
@@ -248,12 +280,16 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
         </div>
       </main>
 
-      {/* Warning banner if tab switched */}
+      {/* Warning banner — escalates as tab count approaches limit */}
       {tabCount > 0 && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2
-                        bg-yellow-50 border border-yellow-300 text-yellow-800 text-xs rounded-xl
-                        px-4 py-2.5 shadow-lg z-50">
-          Tab switching detected ({tabCount}×) — this session is being monitored.
+        <div className={`fixed bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2
+                        text-xs rounded-xl px-4 py-2.5 shadow-lg z-50 transition-colors
+                        ${tabCount >= TAB_LIMIT - 1
+                          ? "bg-red-50 border border-red-400 text-red-700 font-semibold"
+                          : "bg-yellow-50 border border-yellow-300 text-yellow-800"}`}>
+          {tabCount >= TAB_LIMIT - 1
+            ? `WARNING: ${tabCount}/${TAB_LIMIT} tab switches — one more will terminate your exam!`
+            : `Tab switching detected (${tabCount}×) — this session is being monitored.`}
         </div>
       )}
     </div>
