@@ -329,6 +329,7 @@ async def create_exam_session(req: ExamSessionRequest) -> ExamSessionResponse:
     _exam_sessions[exam_id] = {
         "session":        session,
         "analysis_queue": asyncio.Queue(),
+        "monitor_queues": [],     # fan-out queues for invigilator monitor connections
         "absent_since":   None,   # tracks continuous face-absent window
         "started_at":     now,
     }
@@ -392,19 +393,29 @@ async def _run_exam_analysis(exam_id: str) -> None:
     queue   = entry["analysis_queue"]
 
     try:
+        config      = {"configurable": {"thread_id": exam_id}}
         accumulated: dict = {}
 
-        async for update in stream_exam_analysis(session):
-            node_output = update  # stream_exam_analysis already yields dicts
+        async for event in _exam_graph.astream(session, config=config):
+            node_name, node_output = next(iter(event.items()))
+
+            # Accumulate full node output so report/score/verdict are captured
             for k, v in node_output.items():
                 if k == "agent_logs":
                     accumulated.setdefault("agent_logs", [])
                     accumulated["agent_logs"].extend(v if isinstance(v, list) else [v])
                 else:
                     accumulated[k] = v
-            await queue.put(update)
 
-        # Persist final fields back into the live session object
+            await queue.put({
+                "type":    "analysis_update",
+                "node":    node_name,
+                "logs":    node_output.get("agent_logs", []),
+                "status":  node_output.get("status", ""),
+                "exam_id": exam_id,
+            })
+
+        # Persist final state back into the live session object
         for field in ("report", "verdict", "integrity_score", "behavior_flags",
                       "anomaly_scores", "alerts"):
             if field in accumulated:
@@ -424,6 +435,12 @@ async def _run_exam_analysis(exam_id: str) -> None:
 
     finally:
         await queue.put(None)
+
+
+async def _fan_out(entry: dict, msg: dict) -> None:
+    """Push a message to all connected invigilator monitor queues."""
+    for q in list(entry["monitor_queues"]):
+        await q.put(msg)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -470,6 +487,7 @@ async def ws_exam_events(websocket: WebSocket, exam_id: str) -> None:
                 if alert:
                     await websocket.send_json(alert)
                     session["immediate_alerts"].append(alert)
+                    await _fan_out(entry, alert)
 
             # ── Face events ──────────────────────────────────
             elif event_type == "face_event":
@@ -486,6 +504,7 @@ async def ws_exam_events(websocket: WebSocket, exam_id: str) -> None:
                         if alert:
                             await websocket.send_json(alert)
                             session["immediate_alerts"].append(alert)
+                            await _fan_out(entry, alert)
                 else:
                     entry["absent_since"] = None   # face back in frame
 
@@ -493,6 +512,7 @@ async def ws_exam_events(websocket: WebSocket, exam_id: str) -> None:
                 if alert:
                     await websocket.send_json(alert)
                     session["immediate_alerts"].append(alert)
+                    await _fan_out(entry, alert)
 
             # ── Keystroke stats ──────────────────────────────
             elif event_type == "keystroke_stats":
@@ -506,16 +526,19 @@ async def ws_exam_events(websocket: WebSocket, exam_id: str) -> None:
                 if alert:
                     await websocket.send_json(alert)
                     session["immediate_alerts"].append(alert)
+                    await _fan_out(entry, alert)
 
             # ── End exam ─────────────────────────────────────
             elif event_type == "end_exam":
                 session["status"]   = "ended"
                 session["ended_at"] = time.time()
-                await websocket.send_json({
+                ended_msg = {
                     "type":    "exam_ended",
                     "exam_id": exam_id,
                     "message": "Exam ended. Run POST /api/exam/{exam_id}/analyze to generate the integrity report.",
-                })
+                }
+                await websocket.send_json(ended_msg)
+                await _fan_out(entry, ended_msg)
                 break
 
             # ── Keepalive ────────────────────────────────────
@@ -531,6 +554,49 @@ async def ws_exam_events(websocket: WebSocket, exam_id: str) -> None:
         except Exception:
             pass
     finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════
+#  ExamGuard — invigilator monitor WebSocket
+#  One-directional: server fans out immediate alerts and
+#  exam_ended events to the invigilator dashboard in real-time.
+# ══════════════════════════════════════════════════════════════
+
+@app.websocket("/ws/exam/{exam_id}/monitor")
+async def ws_exam_monitor(websocket: WebSocket, exam_id: str) -> None:
+    entry = _exam_sessions.get(exam_id)
+    if not entry:
+        await websocket.close(code=4004, reason="Exam session not found")
+        return
+
+    await websocket.accept()
+    q: asyncio.Queue = asyncio.Queue()
+    entry["monitor_queues"].append(q)
+    logger.info("Monitor WS connected for exam %s", exam_id)
+
+    try:
+        while True:
+            try:
+                msg = await asyncio.wait_for(q.get(), timeout=PING_INTERVAL)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "ping"})
+                continue
+
+            if msg is None:
+                break
+
+            await websocket.send_json(msg)
+
+    except WebSocketDisconnect:
+        logger.info("Monitor WS disconnected for exam %s", exam_id)
+    except Exception as exc:
+        logger.error("Monitor WS error for exam %s: %s", exam_id, exc)
+    finally:
+        entry["monitor_queues"].remove(q)
         try:
             await websocket.close()
         except Exception:

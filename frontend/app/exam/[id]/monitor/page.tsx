@@ -14,7 +14,7 @@ interface Report {
   exam_name:       string
   integrity_score: number
   verdict:         string
-  narrative:       { executive_summary: string; key_concerns: string[]; recommendation: string }
+  narrative:       { summary: string; key_concerns: string[]; recommendation: string }
   raw_stats:       { tab_blur_count: number; face_absent_count: number; multi_face_count: number; copy_paste_count: number }
 }
 
@@ -29,9 +29,9 @@ export default function InvigilatorMonitor({ params }: { params: { id: string } 
   const [analysing,    setAnalysing]    = useState(false)
   const [analysisWsUrl, setAnalysisWsUrl] = useState<string | null>(null)
 
-  // ── Event socket (browser→server, server→monitor) ─────────
+  // ── Monitor socket (server fans out alerts to invigilator) ──
   const { status: eventStatus } = useWebSocket(
-    `${WS_BASE}/ws/exam/${examId}`,
+    `${WS_BASE}/ws/exam/${examId}/monitor`,
     (msg) => {
       if (msg.type === "immediate_alert") {
         setAlerts((prev) => [msg as unknown as Alert, ...prev])
@@ -40,10 +40,11 @@ export default function InvigilatorMonitor({ params }: { params: { id: string } 
         setScore((s) => {
           const sev = (msg as Alert).severity
           const drop = sev === "CRITICAL" ? 20 : sev === "WARNING" ? 8 : 2
-          return Math.max(0, s - drop)
+          const next = Math.max(0, s - drop)
+          if (next < 50) setVerdict("FLAGGED")
+          else if (next < 75) setVerdict("SUSPICIOUS")
+          return next
         })
-        if (score < 50) setVerdict("FLAGGED")
-        else if (score < 75) setVerdict("SUSPICIOUS")
       }
 
       if (msg.type === "exam_ended") {
@@ -179,10 +180,10 @@ export default function InvigilatorMonitor({ params }: { params: { id: string } 
           <div className="bg-sentinel-surface border border-sentinel-border rounded-xl p-4 space-y-3">
             <h3 className="text-xs font-semibold text-sentinel-muted uppercase tracking-wider">Activity Stats</h3>
             {[
-              { label: "Tab Switches",   value: alerts.filter((a) => a.title?.toLowerCase().includes("tab")).length },
-              { label: "Face Absences",  value: alerts.filter((a) => a.title?.toLowerCase().includes("face")).length },
-              { label: "Copy-Paste",     value: alerts.filter((a) => a.title?.toLowerCase().includes("copy")).length },
-              { label: "Total Alerts",   value: alerts.length },
+              { label: "Tab Switches",  value: report ? report.raw_stats.tab_blur_count   : alerts.filter((a) => a.title?.toLowerCase().includes("tab")).length },
+              { label: "Face Absences", value: report ? report.raw_stats.face_absent_count : alerts.filter((a) => a.title?.toLowerCase().includes("face")).length },
+              { label: "Copy-Paste",    value: report ? report.raw_stats.copy_paste_count  : alerts.filter((a) => a.title?.toLowerCase().includes("copy")).length },
+              { label: "Total Alerts",  value: report ? (report.raw_stats.tab_blur_count + report.raw_stats.face_absent_count + report.raw_stats.copy_paste_count) : alerts.length },
             ].map(({ label, value }) => (
               <div key={label} className="flex justify-between items-center text-sm">
                 <span className="text-sentinel-muted">{label}</span>
@@ -197,7 +198,7 @@ export default function InvigilatorMonitor({ params }: { params: { id: string } 
           {report?.narrative && (
             <div className="bg-sentinel-surface border border-sentinel-border rounded-xl p-4 space-y-3">
               <h3 className="text-xs font-semibold text-sentinel-muted uppercase tracking-wider">AI Report</h3>
-              <p className="text-xs text-slate-300 leading-relaxed">{report.narrative.executive_summary}</p>
+              <p className="text-xs text-slate-300 leading-relaxed">{report.narrative.summary}</p>
               {report.narrative.key_concerns?.length > 0 && (
                 <div>
                   <p className="text-xs font-medium text-sentinel-muted mb-1.5">Key concerns</p>
