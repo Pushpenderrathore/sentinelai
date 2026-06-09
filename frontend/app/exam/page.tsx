@@ -9,6 +9,7 @@ export default function ExamPage() {
   const [form, setForm] = useState({
     student_id:       "",
     student_name:     "",
+    college_id:       "",
     exam_name:        "B.Tech Proctored Examination",
     duration_minutes: 60,
   })
@@ -21,7 +22,7 @@ export default function ExamPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.student_id || !form.student_name) return
+    if (!form.student_id || !form.student_name || !form.college_id) return
     setLoading(true)
     setError("")
     try {
@@ -52,8 +53,9 @@ export default function ExamPage() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {[
-            { key: "student_name", label: "Student Name", placeholder: "Riya Sharma",    type: "text" },
-            { key: "student_id",   label: "Student ID",   placeholder: "STU-2024-001",   type: "text" },
+            { key: "student_name", label: "Student Name", placeholder: "Riya Sharma",       type: "text" },
+            { key: "student_id",   label: "Student ID",   placeholder: "STU-2024-001",      type: "text" },
+            { key: "college_id",   label: "College ID",   placeholder: "CLG-AKGEC-2024",    type: "text" },
           ].map(({ key, label, placeholder, type }) => (
             <div key={key}>
               <label className="block text-xs text-sentinel-muted mb-1.5">{label}</label>
@@ -108,14 +110,14 @@ export default function ExamPage() {
           <p className="text-xs text-sentinel-muted text-center mb-2">Quick fill example</p>
           <div className="flex flex-wrap gap-2 justify-center">
             {[
-              { label: "Riya Sharma",  student_name: "Riya Sharma",  student_id: "24-CSE-1042", duration_minutes: 60  },
-              { label: "Arjun Mehta", student_name: "Arjun Mehta", student_id: "24-CSE-2187", duration_minutes: 90  },
-              { label: "Priya Patel", student_name: "Priya Patel", student_id: "24-IT-3056",  duration_minutes: 120 },
+              { label: "Riya Sharma",  student_name: "Riya Sharma",  student_id: "24-CSE-1042", college_id: "CLG-AKGEC-2024", duration_minutes: 60  },
+              { label: "Arjun Mehta", student_name: "Arjun Mehta", student_id: "24-CSE-2187", college_id: "CLG-AKGEC-2024", duration_minutes: 90  },
+              { label: "Priya Patel", student_name: "Priya Patel", student_id: "24-IT-3056",  college_id: "CLG-AKGEC-2024", duration_minutes: 120 },
             ].map((ex) => (
               <button
                 key={ex.label}
                 type="button"
-                onClick={() => setForm({ student_name: ex.student_name, student_id: ex.student_id, exam_name: "B.Tech Proctored Examination", duration_minutes: ex.duration_minutes })}
+                onClick={() => setForm({ student_name: ex.student_name, student_id: ex.student_id, college_id: ex.college_id, exam_name: "B.Tech Proctored Examination", duration_minutes: ex.duration_minutes })}
                 className="text-xs font-mono px-3 py-1.5 rounded-lg border border-sentinel-border
                            text-sentinel-muted hover:text-white hover:border-slate-500 transition-colors"
               >
