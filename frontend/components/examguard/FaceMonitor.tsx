@@ -15,14 +15,12 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
   const canvasRef   = useRef<HTMLCanvasElement>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Persistent refs — survive effect re-runs caused by callback identity changes
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cocoRef         = useRef<any>(null)
-  const cocoLoadingRef  = useRef(false)
+  const mpDetectorRef   = useRef<any>(null)
+  const mpLoadingRef    = useRef(false)
   const onPhoneEventRef = useRef(onPhoneEvent)
   const onFaceEventRef  = useRef(onFaceEvent)
 
-  // Keep callback refs current without re-running effects
   useEffect(() => { onPhoneEventRef.current = onPhoneEvent }, [onPhoneEvent])
   useEffect(() => { onFaceEventRef.current  = onFaceEvent  }, [onFaceEvent])
 
@@ -31,7 +29,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
   const [modelStatus,  setModelStatus]  = useState<ModelStatus>("loading")
   const [faceCount,    setFaceCount]    = useState<number | null>(null)
   const [phoneVisible, setPhoneVisible] = useState(false)
-  const [cocoReady,    setCocoReady]    = useState(false)
+  const [mpReady,      setMpReady]      = useState(false)
 
   // ── Load face-api once ─────────────────────────────────────
   useEffect(() => {
@@ -51,26 +49,34 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
     return () => { cancelled = true }
   }, [active])
 
-  // ── Load coco-ssd once (separate effect, detector stored in ref) ──
+  // ── Load MediaPipe EfficientDet once ───────────────────────
   useEffect(() => {
-    if (!active || cocoRef.current || cocoLoadingRef.current) return
-    cocoLoadingRef.current = true
+    if (!active || mpDetectorRef.current || mpLoadingRef.current) return
+    mpLoadingRef.current = true
 
-    async function loadCoco() {
+    async function loadMediaPipe() {
       try {
-        const tf      = await import("@tensorflow/tfjs")
-        await tf.ready()
-        const cocoSsd = await import("@tensorflow-models/coco-ssd")
-        // mobilenet_v2 is more accurate for small objects like phones
-        cocoRef.current = await cocoSsd.load({ base: "mobilenet_v2" })
-        setCocoReady(true)
-        console.log("[PhoneDetect] COCO-SSD (mobilenet_v1) ready")
+        const { ObjectDetector, FilesetResolver } = await import("@mediapipe/tasks-vision")
+        const vision = await FilesetResolver.forVisionTasks(
+          `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm`,
+        )
+        mpDetectorRef.current = await ObjectDetector.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite",
+            delegate: "GPU",
+          },
+          scoreThreshold: 0.3,
+          runningMode: "VIDEO",
+        })
+        setMpReady(true)
+        console.log("[PhoneDetect] MediaPipe EfficientDet ready")
       } catch (e) {
-        console.error("[PhoneDetect] COCO-SSD load failed:", e)
-        cocoLoadingRef.current = false
+        console.error("[PhoneDetect] MediaPipe load failed:", e)
+        mpLoadingRef.current = false
       }
     }
-    loadCoco()
+    loadMediaPipe()
   }, [active])
 
   // ── Start webcam once face model is ready ─────────────────
@@ -79,7 +85,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
     let stream: MediaStream | null = null
 
     navigator.mediaDevices
-      // 640×480 gives COCO-SSD 4× more pixels — critical for phone detection accuracy
+      // 640×480 gives detection models 4× more pixels than 320×240
       .getUserMedia({ video: { width: 640, height: 480, facingMode: "user" } })
       .then((s) => {
         stream = s
@@ -97,7 +103,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
     }
   }, [active, modelStatus])
 
-  // ── Detection loop — deps use refs, not callbacks ─────────
+  // ── Detection loop ─────────────────────────────────────────
   useEffect(() => {
     if (!streaming || modelStatus !== "ready") return
 
@@ -106,7 +112,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
       try {
         const faceapi = await import("@vladmandic/face-api")
 
-        // ── Face detection ──────────────────────────────
+        // ── Face detection ─────────────────────────────
         const detections = await faceapi.detectAllFaces(
           videoRef.current,
           new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 }),
@@ -116,40 +122,55 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
         setFaceCount(count)
         onFaceEventRef.current(count, parseFloat(bestScore.toFixed(2)))
 
-        // ── Phone detection (single pass) ───────────────
-        let phones: { bbox: [number, number, number, number]; score: number }[] = []
-        if (cocoRef.current && videoRef.current) {
+        // ── Phone detection via MediaPipe EfficientDet ─
+        type PhoneBox = { bbox: [number, number, number, number]; score: number }
+        let phones: PhoneBox[] = []
+
+        if (mpDetectorRef.current && videoRef.current) {
           try {
-            // minScore 0.25 — catches phones at an angle, in poor lighting, or screen-down
-            const objects = await cocoRef.current.detect(videoRef.current, 20, 0.25)
-            // Also catch "remote" — COCO-SSD misclassifies phones as remotes when held flat
-            phones = objects.filter((o: { class: string; bbox: [number,number,number,number]; score: number }) =>
-              o.class === "cell phone" || o.class === "remote"
+            const result = mpDetectorRef.current.detectForVideo(
+              videoRef.current,
+              Date.now(),
             )
-            if (phones.length > 0) console.log(`[PhoneDetect] detected: ${phones.map(p => `${p.class}(${p.score.toFixed(2)})`).join(", ")}`)
-            if (phones.length > 0) {
-              const best = Math.max(...phones.map((p) => p.score))
-              setPhoneVisible(true)
-              onPhoneEventRef.current?.(parseFloat(best.toFixed(2)))
-            } else {
-              setPhoneVisible(false)
+            // EfficientDet uses "cell phone" from COCO labels
+            for (const det of result.detections) {
+              for (const cat of det.categories) {
+                if (cat.categoryName === "cell phone" || cat.categoryName === "remote") {
+                  const b = det.boundingBox
+                  phones.push({
+                    bbox: [b.originX, b.originY, b.width, b.height],
+                    score: cat.score,
+                  })
+                  console.log(`[PhoneDetect] ${cat.categoryName} @ ${cat.score.toFixed(2)}`)
+                  break
+                }
+              }
             }
           } catch (e) {
-            console.warn("[PhoneDetect] detect() error:", e)
+            console.warn("[PhoneDetect] detectForVideo error:", e)
           }
         }
 
-        // ── Draw bounding boxes ─────────────────────────
+        if (phones.length > 0) {
+          setPhoneVisible(true)
+          const best = Math.max(...phones.map((p) => p.score))
+          onPhoneEventRef.current?.(parseFloat(best.toFixed(2)))
+        } else {
+          setPhoneVisible(false)
+        }
+
+        // ── Draw overlays ──────────────────────────────
         if (canvasRef.current && videoRef.current) {
           const dims = {
-            width:  videoRef.current.videoWidth  || 320,
-            height: videoRef.current.videoHeight || 240,
+            width:  videoRef.current.videoWidth  || 640,
+            height: videoRef.current.videoHeight || 480,
           }
           faceapi.matchDimensions(canvasRef.current, dims)
           const resized = faceapi.resizeResults(detections, dims)
           const ctx = canvasRef.current.getContext("2d")
           if (ctx) {
             ctx.clearRect(0, 0, dims.width, dims.height)
+
             resized.forEach((d) => {
               const { x, y, width, height } = d.box
               const color = count === 1 ? "#22d3ee" : count === 0 ? "#f87171" : "#fb923c"
@@ -160,7 +181,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
               ctx.font = "11px monospace"
               ctx.fillText(`${(d.score * 100).toFixed(0)}%`, x + 4, y - 4)
             })
-            // Phone boxes (reuse results from detection pass above)
+
             phones.forEach(({ bbox }) => {
               const [x, y, w, h] = bbox
               ctx.strokeStyle = "#ef4444"
@@ -182,7 +203,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [streaming, modelStatus])   // ← no callbacks in deps; use refs instead
+  }, [streaming, modelStatus])
 
   // ── Render ────────────────────────────────────────────────
 
@@ -210,16 +231,8 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
   return (
     <div className="space-y-1">
       <div className="relative aspect-video rounded-xl overflow-hidden bg-black border border-sentinel-border">
-        <video
-          ref={videoRef}
-          muted
-          playsInline
-          className="w-full h-full object-cover scale-x-[-1]"
-        />
-        <canvas
-          ref={canvasRef}
-          className="absolute inset-0 w-full h-full scale-x-[-1] pointer-events-none"
-        />
+        <video ref={videoRef} muted playsInline className="w-full h-full object-cover scale-x-[-1]" />
+        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full scale-x-[-1] pointer-events-none" />
 
         {!streaming && modelStatus === "loading" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-sentinel-surface">
@@ -250,13 +263,14 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
           </div>
         )}
 
-        {/* Phone AI status — shown when model is loading or a phone is detected */}
-        {streaming && !cocoReady && (
+        {/* Phone AI loading indicator */}
+        {streaming && !mpReady && (
           <div className="absolute bottom-2 right-2 bg-black/60 rounded-full px-2 py-1">
             <span className="text-[10px] font-mono text-yellow-400">📱 loading…</span>
           </div>
         )}
 
+        {/* Phone detected badge */}
         {streaming && phoneVisible && (
           <div className="absolute top-2 left-2 bg-red-600/90 rounded-full px-2 py-1 animate-pulse">
             <span className="text-[10px] font-mono text-white">📱 PHONE</span>
