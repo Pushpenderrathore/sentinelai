@@ -139,11 +139,14 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
     [status, send],
   )
 
-  // ── Phone detection forwarding ────────────────────────────
-  const onPhoneEvent = useCallback(
-    (confidence: number) => {
+  // ── Phone detection — unused (YOLOv8 backend now handles it) ─
+  const onPhoneEvent = useCallback((_confidence: number) => {}, [])
+
+  // ── Send video frame to backend for YOLOv8 phone detection ──
+  const sendFrame = useCallback(
+    ({ jpeg_b64 }: { jpeg_b64: string }) => {
       if (status === "open") {
-        send({ type: "phone_detected", confidence, timestamp: Date.now() / 1000 })
+        send({ type: "video_frame", image: jpeg_b64, timestamp: Date.now() / 1000 })
       }
     },
     [status, send],
@@ -217,7 +220,7 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
 
         {/* Hidden camera feed */}
         <div className="w-20 rounded-lg overflow-hidden">
-          <FaceMonitor onFaceEvent={onFaceEvent} onPhoneEvent={onPhoneEvent} active={status === "open"} />
+          <FaceMonitor onFaceEvent={onFaceEvent} onPhoneEvent={onPhoneEvent} sendFrame={sendFrame} active={status === "open"} />
         </div>
       </header>
 

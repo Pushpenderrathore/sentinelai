@@ -3,103 +3,34 @@
 import { useEffect, useRef, useState } from "react"
 
 interface Props {
-  onFaceEvent:   (faceCount: number, confidence: number) => void
-  onPhoneEvent?: (confidence: number) => void
-  active: boolean
+  onFaceEvent:    (faceCount: number, confidence: number) => void
+  onPhoneEvent?:  (confidence: number) => void
+  active:         boolean
+  sendFrame?:     (jpeg_b64: string) => void   // caller provides WS send for frames
 }
 
 type ModelStatus = "loading" | "ready" | "error"
 
-// ── Canvas-based phone screen detector ──────────────────────────────────────
-// Phone screens are distinctly bright and rectangular. This works without any
-// ML model, loads instantly, and is highly reliable for webcam detection.
-function detectPhoneScreen(video: HTMLVideoElement): number {
-  if (video.readyState < 2) return 0
-
-  // Downsample to 80×60 for speed (still enough for region detection)
-  const W = 80, H = 60
-  const offscreen = document.createElement("canvas")
-  offscreen.width = W
-  offscreen.height = H
-  const ctx = offscreen.getContext("2d", { willReadFrequently: true })
-  if (!ctx) return 0
-
-  ctx.drawImage(video, 0, 0, W, H)
-  const { data } = ctx.getImageData(0, 0, W, H)
-
-  // Build luminance grid
-  const lum = new Float32Array(W * H)
-  for (let i = 0; i < W * H; i++) {
-    const p = i * 4
-    lum[i] = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2]
-  }
-
-  // Adaptive threshold: pixels brighter than (median + 0.45 * range)
-  const sorted = Float32Array.from(lum).sort()
-  const median  = sorted[Math.floor(sorted.length / 2)]
-  const max     = sorted[sorted.length - 1]
-  const range   = max - median
-  if (range < 40) return 0  // scene too uniformly lit — no phone screen visible
-
-  const threshold = median + range * 0.45
-
-  // Find bounding box of bright pixels
-  let minX = W, maxX = 0, minY = H, maxY = 0, brightCount = 0
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      if (lum[y * W + x] > threshold) {
-        brightCount++
-        if (x < minX) minX = x
-        if (x > maxX) maxX = x
-        if (y < minY) minY = y
-        if (y > maxY) maxY = y
-      }
-    }
-  }
-
-  const bboxW = maxX - minX + 1
-  const bboxH = maxY - minY + 1
-  if (bboxW < 4 || bboxH < 4) return 0
-
-  // Fill ratio: how rectangular is the bright region? (phone screen = very high)
-  const fillRatio = brightCount / (bboxW * bboxH)
-  if (fillRatio < 0.45) return 0   // too scattered — not a solid screen
-
-  // Aspect ratio: phone screens are 1.5:1 to 2.5:1 (portrait or landscape)
-  const ar = Math.max(bboxW, bboxH) / Math.min(bboxW, bboxH)
-  if (ar < 1.3 || ar > 3.2) return 0
-
-  // Area ratio: phone screen should be 4–40% of frame
-  const areaRatio = brightCount / (W * H)
-  if (areaRatio < 0.03 || areaRatio > 0.45) return 0
-
-  // Confidence score 0–1
-  const confidence = Math.min(1, fillRatio * areaRatio * 12)
-  return confidence
-}
-
-export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props) {
+export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active, sendFrame }: Props) {
   const videoRef    = useRef<HTMLVideoElement>(null)
   const canvasRef   = useRef<HTMLCanvasElement>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mpDetectorRef   = useRef<any>(null)
-  const mpLoadingRef    = useRef(false)
-  const onPhoneEventRef = useRef(onPhoneEvent)
   const onFaceEventRef  = useRef(onFaceEvent)
+  const onPhoneEventRef = useRef(onPhoneEvent)
+  const sendFrameRef    = useRef(sendFrame)
 
-  useEffect(() => { onPhoneEventRef.current = onPhoneEvent }, [onPhoneEvent])
   useEffect(() => { onFaceEventRef.current  = onFaceEvent  }, [onFaceEvent])
+  useEffect(() => { onPhoneEventRef.current = onPhoneEvent }, [onPhoneEvent])
+  useEffect(() => { sendFrameRef.current    = sendFrame    }, [sendFrame])
 
   const [camError,     setCamError]     = useState<string | null>(null)
   const [streaming,    setStreaming]     = useState(false)
   const [modelStatus,  setModelStatus]  = useState<ModelStatus>("loading")
   const [faceCount,    setFaceCount]    = useState<number | null>(null)
   const [phoneVisible, setPhoneVisible] = useState(false)
-  const [mpReady,      setMpReady]      = useState(false)
 
-  // ── Load face-api once ─────────────────────────────────────
+  // ── Load face-api once ──────────────────────────────────────
   useEffect(() => {
     if (!active) return
     let cancelled = false
@@ -117,34 +48,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
     return () => { cancelled = true }
   }, [active])
 
-  // ── Load MediaPipe EfficientDet (secondary, enhances accuracy) ──
-  useEffect(() => {
-    if (!active || mpDetectorRef.current || mpLoadingRef.current) return
-    mpLoadingRef.current = true
-
-    async function loadMediaPipe() {
-      try {
-        const { ObjectDetector, FilesetResolver } = await import("@mediapipe/tasks-vision")
-        const vision = await FilesetResolver.forVisionTasks("/mediapipe/wasm")
-        mpDetectorRef.current = await ObjectDetector.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: "/mediapipe/efficientdet_lite0.tflite",
-            delegate: "CPU",
-          },
-          scoreThreshold: 0.25,
-          runningMode: "VIDEO",
-        })
-        setMpReady(true)
-        console.log("[PhoneDetect] MediaPipe EfficientDet ready ✓")
-      } catch (e) {
-        console.error("[PhoneDetect] MediaPipe load failed (canvas detector still active):", e)
-        mpLoadingRef.current = false
-      }
-    }
-    loadMediaPipe()
-  }, [active])
-
-  // ── Start webcam once face model is ready ─────────────────
+  // ── Start webcam ────────────────────────────────────────────
   useEffect(() => {
     if (!active || modelStatus !== "ready") return
     let stream: MediaStream | null = null
@@ -167,19 +71,19 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
     }
   }, [active, modelStatus])
 
-  // ── Detection loop ─────────────────────────────────────────
+  // ── Detection loop ──────────────────────────────────────────
   useEffect(() => {
     if (!streaming || modelStatus !== "ready") return
 
-    // Consecutive-frame counter to avoid single-frame false positives
-    let consecutivePhoneFrames = 0
+    // Offscreen canvas for JPEG capture
+    const captureCanvas = document.createElement("canvas")
 
     async function detect() {
       if (!videoRef.current) return
       try {
         const faceapi = await import("@vladmandic/face-api")
 
-        // ── Face detection ─────────────────────────────
+        // ── Face detection ────────────────────────────
         const detections = await faceapi.detectAllFaces(
           videoRef.current,
           new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 }),
@@ -189,53 +93,30 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
         setFaceCount(count)
         onFaceEventRef.current(count, parseFloat(bestScore.toFixed(2)))
 
-        // ── Phone detection (canvas brightness + MediaPipe) ─
-        type PhoneBox = { bbox: [number, number, number, number]; score: number }
-        let phones: PhoneBox[] = []
-        let canvasScore = 0
-
-        // Primary: canvas brightness/rectangle detector (instant, no model needed)
-        canvasScore = detectPhoneScreen(videoRef.current)
-        if (canvasScore > 0.15) {
-          phones.push({ bbox: [0, 0, 0, 0], score: canvasScore })
-          console.log(`[PhoneDetect] canvas detector: score=${canvasScore.toFixed(3)}`)
-        }
-
-        // Secondary: MediaPipe EfficientDet (when loaded)
-        if (mpDetectorRef.current && videoRef.current.readyState >= 2) {
-          try {
-            const result = mpDetectorRef.current.detectForVideo(videoRef.current, performance.now())
-            for (const det of result.detections) {
-              for (const cat of det.categories) {
-                if (cat.categoryName === "cell phone" || cat.categoryName === "remote") {
-                  const b = det.boundingBox
-                  phones.push({ bbox: [b.originX, b.originY, b.width, b.height], score: cat.score })
-                  console.log(`[PhoneDetect] MediaPipe: ${cat.categoryName} @ ${cat.score.toFixed(2)}`)
-                  break
-                }
+        // ── Send frame to backend for YOLOv8 phone detection ──
+        if (sendFrameRef.current && videoRef.current.readyState >= 2) {
+          const vw = videoRef.current.videoWidth  || 640
+          const vh = videoRef.current.videoHeight || 480
+          // Scale down to 320×240 for the JPEG — plenty for YOLO
+          captureCanvas.width  = 320
+          captureCanvas.height = 240
+          const ctx = captureCanvas.getContext("2d")
+          if (ctx) {
+            ctx.drawImage(videoRef.current, 0, 0, 320, 240)
+            captureCanvas.toBlob((blob) => {
+              if (!blob) return
+              const reader = new FileReader()
+              reader.onloadend = () => {
+                const b64 = (reader.result as string).split(",")[1]
+                sendFrameRef.current!({ jpeg_b64: b64 } as never)
               }
-            }
-          } catch { /* MediaPipe not yet ready or frame timing issue */ }
+              reader.readAsDataURL(blob)
+            }, "image/jpeg", 0.7)
+          }
+          void vw  // suppress unused var warning
         }
 
-        // Require 2 consecutive frames to confirm (reduces false positives)
-        if (phones.length > 0) {
-          consecutivePhoneFrames++
-        } else {
-          consecutivePhoneFrames = 0
-        }
-
-        const confirmed = consecutivePhoneFrames >= 2
-
-        if (confirmed) {
-          setPhoneVisible(true)
-          const best = Math.max(...phones.map((p) => p.score))
-          onPhoneEventRef.current?.(parseFloat(best.toFixed(2)))
-        } else {
-          setPhoneVisible(false)
-        }
-
-        // ── Draw overlays ──────────────────────────────
+        // ── Draw face boxes ───────────────────────────
         if (canvasRef.current && videoRef.current) {
           const dims = {
             width:  videoRef.current.videoWidth  || 640,
@@ -246,7 +127,6 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
           const ctx = canvasRef.current.getContext("2d")
           if (ctx) {
             ctx.clearRect(0, 0, dims.width, dims.height)
-
             resized.forEach((d) => {
               const { x, y, width, height } = d.box
               const color = count === 1 ? "#22d3ee" : count === 0 ? "#f87171" : "#fb923c"
@@ -257,19 +137,6 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
               ctx.font = "11px monospace"
               ctx.fillText(`${(d.score * 100).toFixed(0)}%`, x + 4, y - 4)
             })
-
-            // Draw phone bounding boxes from MediaPipe (canvas detector has no box)
-            phones
-              .filter((p) => p.bbox[2] > 0)
-              .forEach(({ bbox }) => {
-                const [x, y, w, h] = bbox
-                ctx.strokeStyle = "#ef4444"
-                ctx.lineWidth   = 2
-                ctx.strokeRect(x, y, w, h)
-                ctx.fillStyle = "#ef4444"
-                ctx.font = "bold 11px monospace"
-                ctx.fillText("PHONE", x + 4, y - 4)
-              })
           }
         }
       } catch (e) {
@@ -277,14 +144,26 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
       }
     }
 
-    intervalRef.current = setInterval(detect, 1500)
+    intervalRef.current = setInterval(detect, 3000)
     detect()
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
   }, [streaming, modelStatus])
 
-  // ── Render ────────────────────────────────────────────────
+  // Show/hide phone badge based on parent callback firing
+  // (parent flips phoneVisible via the alert coming back from server)
+  useEffect(() => {
+    const orig = onPhoneEventRef.current
+    onPhoneEventRef.current = (conf: number) => {
+      setPhoneVisible(true)
+      orig?.(conf)
+      // Auto-hide badge after 6s if no new detection
+      setTimeout(() => setPhoneVisible(false), 6000)
+    }
+  }, [])
+
+  // ── Render ─────────────────────────────────────────────────
 
   if (camError) {
     return (
@@ -339,12 +218,6 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
         {streaming && faceCount !== null && (
           <div className="absolute bottom-2 left-2 bg-black/60 rounded-full px-2 py-1">
             <span className={`text-[10px] font-mono ${faceStatusColor}`}>{faceStatusText}</span>
-          </div>
-        )}
-
-        {streaming && !mpReady && (
-          <div className="absolute bottom-2 right-2 bg-black/60 rounded-full px-2 py-1">
-            <span className="text-[10px] font-mono text-yellow-400">📱 enhancing…</span>
           </div>
         )}
 
