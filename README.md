@@ -42,7 +42,7 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously — in
 Paste a **GitHub repository URL** or any **live website URL**. VulnSentinel auto-detects the target type and routes to the right scanner — static analysis for repos, HTTP security checks for websites. Five specialised AI agents then map findings to OWASP Top 10 and CVEs, reason about real-world exploitability, generate patches or remediation guidance, and produce a full security report — all without a human in the loop.
 
 ### 🎓 ExamGuard — AI-Powered Exam Integrity Monitor
-A proctoring system that monitors online exams in real time using tab-switch detection, webcam face analysis, and keystroke dynamics. Immediate rule-based alerts fire the moment suspicious behaviour is detected. When the exam ends, a second agent pipeline performs deep behavioural analysis and generates an integrity report with a verdict.
+A proctoring system that monitors online exams in real time using tab-switch detection, webcam face analysis, **mobile phone detection**, and keystroke dynamics. Immediate rule-based alerts fire the moment suspicious behaviour is detected. Exams are **automatically terminated** after 5 tab switches. When the exam ends, a second agent pipeline performs deep behavioural analysis and generates an integrity report with a verdict.
 
 ---
 
@@ -129,11 +129,14 @@ CRITICAL   0   HIGH  2   MEDIUM  3   LOW  3
 [00:12] ⚠  WARNING  Tab switch detected (1/3)
 [00:34] ⚠  WARNING  Tab switch detected (2/3)
 [00:41] 🚨 CRITICAL Face absent > 30 s continuous
+[00:55] 📱 WARNING  Mobile phone detected in camera (conf 87%)
 [01:02] ⚠  WARNING  Copy-paste event detected (1/2)
-[01:44] 🚨 CRITICAL Tab switch threshold reached (7)
+[01:15] 📱 CRITICAL Repeated phone use detected (2×)
+[01:44] 🚨 CRITICAL Tab switch threshold reached (5) — exam auto-terminated
 
+Exam auto-terminated after 5 tab switches
 Post-session analysis complete
-Integrity Score: 58/100 · Verdict: FLAGGED 🚨
+Integrity Score: 42/100 · Verdict: FLAGGED 🚨
 ```
 
 ---
@@ -152,10 +155,13 @@ Integrity Score: 58/100 · Verdict: FLAGGED 🚨
 ├──────────────────────────┬──────────────────────────────────────┤
 │   VulnSentinel           │   ExamGuard                          │
 │   POST /api/scan         │   POST /api/exam/session             │
-│   WS   /ws/{scan_id}     │   WS   /ws/exam/{id}  (bidir)        │
-│   GET  /api/report/{id}  │   POST /api/exam/{id}/analyze        │
+│   WS   /ws/{scan_id}     │   GET  /api/exam/session/{id}        │
+│   GET  /api/report/{id}  │   WS   /ws/exam/{id}  (bidir)        │
+│   GET  /api/scans        │   WS   /ws/exam/{id}/monitor         │
+│                          │   POST /api/exam/{id}/analyze        │
 │                          │   WS   /ws/exam/{id}/analysis        │
 │                          │   GET  /api/exam/report/{id}         │
+│                          │   GET  /api/exam/sessions            │
 ├──────────────────────────┴──────────────────────────────────────┤
 │              LangGraph Agent Pipelines                           │
 │                                                                  │
@@ -172,7 +178,7 @@ Integrity Score: 58/100 · Verdict: FLAGGED 🚨
 │  │ → fix_suggester          │                                    │
 │  │ → report_generator       │                                    │
 │  └──────────────────────────┘                                    │
-│  LLM: Groq (primary) → Ollama offline fallback (auto-switch)               │
+│  LLM: Groq (primary) → Ollama offline fallback (auto-switch)    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -190,6 +196,8 @@ Integrity Score: 58/100 · Verdict: FLAGGED 🚨
 | Website scanning | HTTP headers · SSL · CORS · cookie · file exposure · port scan (CVE/CWE) |
 | Frontend | Next.js 14 · TypeScript · Tailwind CSS |
 | Real-time | Native WebSocket (browser ↔ server) |
+| Face detection | `@vladmandic/face-api` (TinyFaceDetector — runs in-browser) |
+| Phone detection | `@tensorflow-models/coco-ssd` (MobileNet V2 — runs in-browser, "cell phone" class) |
 
 ---
 
@@ -222,16 +230,16 @@ sentinelai/
     │   │   ├── page.tsx            # Repo URL input
     │   │   └── [id]/page.tsx       # Live scan dashboard (split-pane)
     │   └── exam/
-    │       ├── page.tsx            # Create exam session
-    │       ├── [id]/page.tsx       # Student exam view (proctored)
-    │       └── [id]/monitor/page.tsx  # Invigilator dashboard
+    │       ├── page.tsx            # Create exam session (with quick-fill examples)
+    │       ├── [id]/page.tsx       # Student exam view — proctored, auto-terminates at 5 tab switches
+    │       └── [id]/monitor/page.tsx  # Invigilator dashboard — live alerts + AI report
     ├── components/
     │   ├── vulnsentinel/
     │   │   ├── AgentFeed.tsx       # Terminal-style live log stream
     │   │   └── VulnCard.tsx        # Vuln card with collapsible patch diff
     │   └── examguard/
     │       ├── AlertFeed.tsx       # Real-time alert stream
-    │       ├── FaceMonitor.tsx     # Webcam feed + face event emitter
+    │       ├── FaceMonitor.tsx     # Webcam feed + face detection + phone detection
     │       └── IntegrityScore.tsx  # Animated circular integrity gauge
     └── lib/
         ├── ws.ts                   # useWebSocket hook
@@ -384,11 +392,13 @@ Each open port appears as a VulnCard in the findings panel showing: port badge, 
 
 **Phase 1 — Real-time (during exam)**
 ```
-Browser detects event (tab switch / face absent / copy-paste)
+Browser detects event (tab switch / face absent / phone in frame / copy-paste)
         │
    WebSocket → event_rules.py
         │
-   Rule threshold crossed? → immediate_alert fired to invigilator dashboard instantly
+   Rule threshold crossed? → immediate_alert fanned out to invigilator monitor instantly
+        │
+   Tab switches reach 5? → exam auto-terminated, student sees "Exam Terminated" screen
 ```
 
 **Phase 2 — Deep analysis (after exam ends)**
@@ -413,13 +423,30 @@ POST /api/exam/{id}/analyze
 | Trigger | Threshold | Severity |
 |---------|-----------|----------|
 | Tab switches | 3× | WARNING |
-| Tab switches | 7× | CRITICAL |
+| Tab switches | 5× | CRITICAL + **exam auto-terminated** |
 | Face absent | 10 s continuous | WARNING |
 | Face absent | 30 s continuous | CRITICAL |
 | Multiple faces detected | 2 faces | WARNING |
 | Multiple faces detected | 3+ faces | CRITICAL |
+| Mobile phone in camera | 1st detection | WARNING |
+| Mobile phone in camera | 2nd+ detection | CRITICAL |
 | Copy-paste events | 2× | WARNING |
 | Copy-paste events | 5× | CRITICAL |
+
+### Mobile Phone Detection
+
+The webcam feed is analysed every 3 seconds using two parallel in-browser ML models:
+
+| Model | Purpose | Size |
+|-------|---------|------|
+| `@vladmandic/face-api` TinyFaceDetector | Face counting & presence | ~190 KB |
+| `@tensorflow-models/coco-ssd` MobileNet V2 | Object detection — "cell phone" class | ~3 MB |
+
+Both models run entirely client-side (WebGL) with no cloud API calls. When a phone is detected:
+- A red **📱 PHONE** badge flashes on the camera overlay in the student view
+- A `phone_detected` WebSocket event is sent to the backend
+- The backend fans out an immediate alert to the invigilator monitor
+- The "Phone Detected" counter increments in the Activity Stats panel
 
 ---
 
@@ -437,15 +464,23 @@ POST /api/exam/{id}/analyze
 ### ExamGuard event socket (`/ws/exam/{exam_id}`)
 ```jsonc
 // Client → Server
-{ "type": "tab_event",       "event_type": "blur",   "timestamp": 1234567890.0 }
-{ "type": "face_event",      "face_count": 0,         "confidence": 0.95, "timestamp": 1234567890.0 }
-{ "type": "keystroke_stats", "avg_wpm": 67,            "pause_count": 1, ... }
-{ "type": "copy_paste",      "content_length": 342,   "timestamp": 1234567890.0 }
-{ "type": "end_exam" }
+{ "type": "tab_event",       "event_type": "blur",    "timestamp": 1234567890.0 }
+{ "type": "face_event",      "face_count": 0,          "confidence": 0.95, "timestamp": 1234567890.0 }
+{ "type": "phone_detected",  "confidence": 0.87,       "timestamp": 1234567890.0 }
+{ "type": "keystroke_stats", "avg_wpm": 67,             "pause_count": 1, ... }
+{ "type": "copy_paste",      "content_length": 342,    "timestamp": 1234567890.0 }
+{ "type": "end_exam",        "timestamp": 1234567890.0 }
 
 // Server → Client
-{ "type": "immediate_alert", "severity": "CRITICAL", "title": "Multiple Faces Detected", "message": "...", "recommended_action": "..." }
+{ "type": "immediate_alert", "severity": "CRITICAL", "title": "Mobile Phone Detected", "message": "...", "recommended_action": "..." }
 { "type": "exam_ended" }
+```
+
+### ExamGuard monitor socket (`/ws/exam/{exam_id}/monitor`)
+```jsonc
+// Server → Client  (fan-out of all immediate alerts + exam lifecycle events)
+{ "type": "immediate_alert", "severity": "WARNING", "title": "...", "message": "...", "recommended_action": "..." }
+{ "type": "exam_ended",      "exam_id": "a1b2c3" }
 ```
 
 ---
@@ -466,9 +501,11 @@ POST /api/exam/{id}/analyze
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/exam/session` | Create exam session · returns `exam_id` |
-| `WS` | `/ws/exam/{exam_id}` | Bidirectional event stream |
-| `POST` | `/api/exam/{exam_id}/analyze` | Trigger post-session analysis |
-| `WS` | `/ws/exam/{exam_id}/analysis` | Stream analysis progress |
+| `GET` | `/api/exam/session/{exam_id}` | Fetch session info (duration, student name, status) |
+| `WS` | `/ws/exam/{exam_id}` | Bidirectional student event stream |
+| `WS` | `/ws/exam/{exam_id}/monitor` | Invigilator fan-out stream (alerts + exam lifecycle) |
+| `POST` | `/api/exam/{exam_id}/analyze` | Trigger post-session LangGraph analysis |
+| `WS` | `/ws/exam/{exam_id}/analysis` | Stream analysis agent progress |
 | `GET` | `/api/exam/report/{exam_id}` | Fetch integrity report |
 | `GET` | `/api/exam/sessions` | List all sessions |
 
