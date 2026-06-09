@@ -9,15 +9,15 @@ const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000"
 const SAMPLE_QUESTIONS = [
   {
     n: 1,
-    text: "Explain the time complexity of QuickSort in the average and worst case. Why is the average case O(n log n)?",
+    text: "Explain the time complexity of QuickSort in the average and worst case. Why is the average case O(n log n) while the worst case is O(n²)?",
   },
   {
     n: 2,
-    text: "What is a deadlock? Describe the four necessary conditions (Coffman conditions) for a deadlock to occur.",
+    text: "What is a deadlock? Describe the four necessary Coffman conditions for a deadlock to occur and explain one prevention strategy for each.",
   },
   {
     n: 3,
-    text: "Write pseudocode for Dijkstra's shortest path algorithm and analyse its time complexity using a min-heap.",
+    text: "Write pseudocode for Dijkstra's shortest path algorithm. Analyse its time complexity using a min-heap and an adjacency list representation.",
   },
 ]
 
@@ -152,7 +152,7 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
       {/* Header */}
       <header className="sticky top-0 z-10 flex items-center gap-4 px-6 py-3 bg-white border-b border-slate-200 shadow-sm">
         <div className="flex-1">
-          <h1 className="text-sm font-semibold text-slate-700">Data Structures — Midterm Exam</h1>
+          <h1 className="text-sm font-semibold text-slate-700">Proctored Examination</h1>
           <p className="text-xs text-slate-400 font-mono">Session: {examId}</p>
         </div>
 

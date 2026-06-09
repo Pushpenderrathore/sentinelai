@@ -104,7 +104,29 @@ export default function ExamPage() {
           </button>
         </form>
 
-        <p className="mt-6 text-xs text-center text-sentinel-muted">
+        {/* Quick-fill examples */}
+        <div className="mt-5">
+          <p className="text-xs text-sentinel-muted text-center mb-2">Quick fill example</p>
+          <div className="flex flex-wrap gap-2 justify-center">
+            {[
+              { label: "Riya Sharma",    student_name: "Riya Sharma",    student_id: "24-CSE-1042", exam_name: "Data Structures — Midterm",   duration_minutes: 60  },
+              { label: "Arjun Mehta",   student_name: "Arjun Mehta",    student_id: "24-CSE-2187", exam_name: "Operating Systems — Unit 2",  duration_minutes: 90  },
+              { label: "Priya Patel",   student_name: "Priya Patel",    student_id: "24-IT-3056",  exam_name: "Computer Networks — Finals",  duration_minutes: 120 },
+            ].map((ex) => (
+              <button
+                key={ex.label}
+                type="button"
+                onClick={() => setForm({ student_name: ex.student_name, student_id: ex.student_id, exam_name: ex.exam_name, duration_minutes: ex.duration_minutes })}
+                className="text-xs font-mono px-3 py-1.5 rounded-lg border border-sentinel-border
+                           text-sentinel-muted hover:text-white hover:border-slate-500 transition-colors"
+              >
+                {ex.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <p className="mt-5 text-xs text-center text-sentinel-muted">
           Once created, share the exam link with the student. Open{" "}
           <code className="text-slate-400">/exam/[id]/monitor</code> in a separate tab to watch live.
         </p>
