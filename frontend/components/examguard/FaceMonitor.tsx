@@ -61,8 +61,8 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
         const tf      = await import("@tensorflow/tfjs")
         await tf.ready()
         const cocoSsd = await import("@tensorflow-models/coco-ssd")
-        // mobilenet_v1 is ~28 MB vs 60 MB for v2 — faster to load
-        cocoRef.current = await cocoSsd.load({ base: "mobilenet_v1" })
+        // mobilenet_v2 is more accurate for small objects like phones
+        cocoRef.current = await cocoSsd.load({ base: "mobilenet_v2" })
         setCocoReady(true)
         console.log("[PhoneDetect] COCO-SSD (mobilenet_v1) ready")
       } catch (e) {
@@ -79,7 +79,8 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
     let stream: MediaStream | null = null
 
     navigator.mediaDevices
-      .getUserMedia({ video: { width: 320, height: 240, facingMode: "user" } })
+      // 640×480 gives COCO-SSD 4× more pixels — critical for phone detection accuracy
+      .getUserMedia({ video: { width: 640, height: 480, facingMode: "user" } })
       .then((s) => {
         stream = s
         if (videoRef.current) {
@@ -119,10 +120,13 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
         let phones: { bbox: [number, number, number, number]; score: number }[] = []
         if (cocoRef.current && videoRef.current) {
           try {
-            // minScore 0.3 — lower threshold catches phones at an angle or in poor lighting
-            const objects = await cocoRef.current.detect(videoRef.current, 20, 0.3)
-            phones = objects.filter((o: { class: string; bbox: [number,number,number,number]; score: number }) => o.class === "cell phone")
-            if (phones.length > 0) console.log("[PhoneDetect] phone detected, confidence:", phones[0].score.toFixed(2))
+            // minScore 0.25 — catches phones at an angle, in poor lighting, or screen-down
+            const objects = await cocoRef.current.detect(videoRef.current, 20, 0.25)
+            // Also catch "remote" — COCO-SSD misclassifies phones as remotes when held flat
+            phones = objects.filter((o: { class: string; bbox: [number,number,number,number]; score: number }) =>
+              o.class === "cell phone" || o.class === "remote"
+            )
+            if (phones.length > 0) console.log(`[PhoneDetect] detected: ${phones.map(p => `${p.class}(${p.score.toFixed(2)})`).join(", ")}`)
             if (phones.length > 0) {
               const best = Math.max(...phones.map((p) => p.score))
               setPhoneVisible(true)
@@ -173,7 +177,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
       }
     }
 
-    intervalRef.current = setInterval(detect, 3000)
+    intervalRef.current = setInterval(detect, 2000)
     detect()
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
