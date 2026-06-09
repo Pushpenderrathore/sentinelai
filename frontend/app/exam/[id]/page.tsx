@@ -139,6 +139,16 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
     [status, send],
   )
 
+  // ── Phone detection forwarding ────────────────────────────
+  const onPhoneEvent = useCallback(
+    (confidence: number) => {
+      if (status === "open") {
+        send({ type: "phone_detected", confidence, timestamp: Date.now() / 1000 })
+      }
+    },
+    [status, send],
+  )
+
   // ── Submit ────────────────────────────────────────────────
   function handleSubmit() {
     send({ type: "end_exam", timestamp: Date.now() / 1000 })
@@ -207,7 +217,7 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
 
         {/* Hidden camera feed */}
         <div className="w-20 rounded-lg overflow-hidden">
-          <FaceMonitor onFaceEvent={onFaceEvent} active={status === "open"} />
+          <FaceMonitor onFaceEvent={onFaceEvent} onPhoneEvent={onPhoneEvent} active={status === "open"} />
         </div>
       </header>
 

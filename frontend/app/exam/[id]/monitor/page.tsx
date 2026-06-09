@@ -182,8 +182,9 @@ export default function InvigilatorMonitor({ params }: { params: { id: string } 
             {[
               { label: "Tab Switches",  value: report ? report.raw_stats.tab_blur_count   : alerts.filter((a) => a.title?.toLowerCase().includes("tab")).length },
               { label: "Face Absences", value: report ? report.raw_stats.face_absent_count : alerts.filter((a) => a.title?.toLowerCase().includes("face")).length },
+              { label: "Phone Detected", value: alerts.filter((a) => a.title?.toLowerCase().includes("phone")).length },
               { label: "Copy-Paste",    value: report ? report.raw_stats.copy_paste_count  : alerts.filter((a) => a.title?.toLowerCase().includes("copy")).length },
-              { label: "Total Alerts",  value: report ? (report.raw_stats.tab_blur_count + report.raw_stats.face_absent_count + report.raw_stats.copy_paste_count) : alerts.length },
+              { label: "Total Alerts",  value: alerts.length },
             ].map(({ label, value }) => (
               <div key={label} className="flex justify-between items-center text-sm">
                 <span className="text-sentinel-muted">{label}</span>

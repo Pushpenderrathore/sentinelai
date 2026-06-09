@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState } from "react"
 
 interface Props {
-  onFaceEvent: (faceCount: number, confidence: number) => void
+  onFaceEvent:  (faceCount: number, confidence: number) => void
+  onPhoneEvent?: (confidence: number) => void
   active: boolean
 }
 
 type ModelStatus = "loading" | "ready" | "error"
 
-export default function FaceMonitor({ onFaceEvent, active }: Props) {
+export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props) {
   const videoRef    = useRef<HTMLVideoElement>(null)
   const canvasRef   = useRef<HTMLCanvasElement>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -18,8 +19,9 @@ export default function FaceMonitor({ onFaceEvent, active }: Props) {
   const [streaming,    setStreaming]     = useState(false)
   const [modelStatus,  setModelStatus]  = useState<ModelStatus>("loading")
   const [faceCount,    setFaceCount]    = useState<number | null>(null)
+  const [phoneVisible, setPhoneVisible] = useState(false)
 
-  // Load face-api models once
+  // Load face-api + coco-ssd models once
   useEffect(() => {
     if (!active) return
     let cancelled = false
@@ -28,9 +30,11 @@ export default function FaceMonitor({ onFaceEvent, active }: Props) {
       try {
         const faceapi = await import("@vladmandic/face-api")
         await faceapi.nets.tinyFaceDetector.loadFromUri("/models")
+        // Load coco-ssd (lazy — doesn't block face detection)
+        await import("@tensorflow-models/coco-ssd")
         if (!cancelled) setModelStatus("ready")
       } catch (e) {
-        console.error("face-api model load failed:", e)
+        console.error("model load failed:", e)
         if (!cancelled) setModelStatus("error")
       }
     }
@@ -66,9 +70,15 @@ export default function FaceMonitor({ onFaceEvent, active }: Props) {
   useEffect(() => {
     if (!streaming || modelStatus !== "ready") return
 
+    // Load coco-ssd detector once and reuse
+    let cocoDetector: Awaited<ReturnType<typeof import("@tensorflow-models/coco-ssd")["load"]>> | null = null
+    import("@tensorflow-models/coco-ssd").then((m) => m.load()).then((d) => { cocoDetector = d })
+
     async function detect() {
       if (!videoRef.current) return
+
       try {
+        // ── Face detection ──────────────────────────────────────
         const faceapi = await import("@vladmandic/face-api")
         const detections = await faceapi.detectAllFaces(
           videoRef.current,
@@ -83,7 +93,21 @@ export default function FaceMonitor({ onFaceEvent, active }: Props) {
         setFaceCount(count)
         onFaceEvent(count, parseFloat(bestScore.toFixed(2)))
 
-        // Draw bounding boxes on overlay canvas
+        // ── Phone detection ─────────────────────────────────────
+        let phoneScore = 0
+        if (cocoDetector) {
+          const objects = await cocoDetector.detect(videoRef.current)
+          const phones  = objects.filter((o) => o.class === "cell phone")
+          if (phones.length > 0) {
+            phoneScore = Math.max(...phones.map((p) => p.score))
+            setPhoneVisible(true)
+            if (onPhoneEvent) onPhoneEvent(parseFloat(phoneScore.toFixed(2)))
+          } else {
+            setPhoneVisible(false)
+          }
+        }
+
+        // ── Draw bounding boxes ─────────────────────────────────
         if (canvasRef.current && videoRef.current) {
           const dims = {
             width:  videoRef.current.videoWidth  || 320,
@@ -94,6 +118,8 @@ export default function FaceMonitor({ onFaceEvent, active }: Props) {
           const ctx = canvasRef.current.getContext("2d")
           if (ctx) {
             ctx.clearRect(0, 0, dims.width, dims.height)
+
+            // Face boxes
             resized.forEach((d) => {
               const { x, y, width, height } = d.box
               const color = count === 1 ? "#22d3ee" : count === 0 ? "#f87171" : "#fb923c"
@@ -104,6 +130,22 @@ export default function FaceMonitor({ onFaceEvent, active }: Props) {
               ctx.font = "11px monospace"
               ctx.fillText(`${(d.score * 100).toFixed(0)}%`, x + 4, y - 4)
             })
+
+            // Phone boxes (red)
+            if (cocoDetector) {
+              const objects = await cocoDetector.detect(videoRef.current)
+              objects
+                .filter((o) => o.class === "cell phone")
+                .forEach(({ bbox }) => {
+                  const [x, y, w, h] = bbox
+                  ctx.strokeStyle = "#ef4444"
+                  ctx.lineWidth   = 2
+                  ctx.strokeRect(x, y, w, h)
+                  ctx.fillStyle = "#ef4444"
+                  ctx.font = "11px monospace"
+                  ctx.fillText("📱 phone", x + 4, y - 4)
+                })
+            }
           }
         }
       } catch (e) {
@@ -112,14 +154,14 @@ export default function FaceMonitor({ onFaceEvent, active }: Props) {
     }
 
     intervalRef.current = setInterval(detect, 3000)
-    detect() // run immediately on start
+    detect()
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [streaming, modelStatus, onFaceEvent])
+  }, [streaming, modelStatus, onFaceEvent, onPhoneEvent])
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────
 
   if (camError) {
     return (
@@ -145,7 +187,6 @@ export default function FaceMonitor({ onFaceEvent, active }: Props) {
   return (
     <div className="space-y-1">
       <div className="relative aspect-video rounded-xl overflow-hidden bg-black border border-sentinel-border">
-        {/* Webcam feed (mirrored) */}
         <video
           ref={videoRef}
           muted
@@ -153,13 +194,11 @@ export default function FaceMonitor({ onFaceEvent, active }: Props) {
           className="w-full h-full object-cover scale-x-[-1]"
         />
 
-        {/* Detection overlay canvas (mirrored to match video) */}
         <canvas
           ref={canvasRef}
           className="absolute inset-0 w-full h-full scale-x-[-1] pointer-events-none"
         />
 
-        {/* Status overlays */}
         {!streaming && modelStatus === "loading" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-sentinel-surface">
             <svg className="w-5 h-5 animate-spin text-sentinel-muted" fill="none" viewBox="0 0 24 24">
@@ -176,7 +215,6 @@ export default function FaceMonitor({ onFaceEvent, active }: Props) {
           </div>
         )}
 
-        {/* LIVE badge */}
         {streaming && (
           <div className="absolute top-2 right-2 flex items-center gap-1.5 bg-black/60 rounded-full px-2 py-1">
             <span className="w-1.5 h-1.5 rounded-full bg-sentinel-green animate-pulse" />
@@ -184,10 +222,16 @@ export default function FaceMonitor({ onFaceEvent, active }: Props) {
           </div>
         )}
 
-        {/* Face count badge */}
         {streaming && faceCount !== null && (
           <div className="absolute bottom-2 left-2 bg-black/60 rounded-full px-2 py-1">
             <span className={`text-[10px] font-mono ${faceStatusColor}`}>{faceStatusText}</span>
+          </div>
+        )}
+
+        {/* Phone warning badge */}
+        {streaming && phoneVisible && (
+          <div className="absolute top-2 left-2 bg-red-600/90 rounded-full px-2 py-1 animate-pulse">
+            <span className="text-[10px] font-mono text-white">📱 PHONE</span>
           </div>
         )}
       </div>

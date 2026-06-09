@@ -55,6 +55,7 @@ from exam_agents.event_rules import (
     check_face_event,
     check_tab_event,
     check_absence_duration,
+    check_phone_detected,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
@@ -538,6 +539,17 @@ async def ws_exam_events(websocket: WebSocket, exam_id: str) -> None:
                 session["copy_paste_events"].append(data)
                 count = len(session["copy_paste_events"])
                 alert = check_copy_paste(count, data.get("timestamp", time.time()))
+                if alert:
+                    await websocket.send_json(alert)
+                    session["immediate_alerts"].append(alert)
+                    await _fan_out(entry, alert)
+
+            # ── Phone detection ──────────────────────────────
+            elif event_type == "phone_detected":
+                session.setdefault("phone_events", []).append(data)
+                phone_count = len(session["phone_events"])
+                confidence  = data.get("confidence", 0.0)
+                alert = check_phone_detected(phone_count, confidence, data.get("timestamp", time.time()))
                 if alert:
                     await websocket.send_json(alert)
                     session["immediate_alerts"].append(alert)

@@ -62,6 +62,21 @@ def check_copy_paste(count: int, timestamp: float) -> Optional[dict]:
     return None
 
 
+def check_phone_detected(count: int, confidence: float, timestamp: float) -> Optional[dict]:
+    """Fire a CRITICAL alert the first time a phone is detected, WARNING on subsequent ones."""
+    if count == 1:
+        return _alert("WARNING", "Mobile Phone Detected",
+                      f"A mobile phone was detected in the camera frame (confidence {confidence:.0%}).",
+                      "Warn the student to remove the phone from view immediately.",
+                      timestamp)
+    if count >= 2:
+        return _alert("CRITICAL", "Repeated Phone Use",
+                      f"Mobile phone detected {count} times during the exam (confidence {confidence:.0%}).",
+                      "Flag the session and notify the exam coordinator.",
+                      timestamp)
+    return None
+
+
 def check_absence_duration(absent_since: float, now: Optional[float] = None) -> Optional[dict]:
     duration = (now or time.time()) - absent_since
     if FACE_ABSENT_WARN_S <= duration < FACE_ABSENT_CRIT_S:
