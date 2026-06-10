@@ -83,9 +83,17 @@ def _v_swagger_ui(r) -> bool:
 def _v_ds_store(r) -> bool:
     return b"Bud1" in r.content[:8] or r.content[:4] == b"\x00\x00\x00\x01"
 
-def _v_admin_panel(r) -> bool:
-    t = r.text[:5000].lower()
-    return any(k in t for k in ("login", "password", "sign in", "username", "phpmyadmin", "dashboard"))
+def _v_login_panel(r) -> bool:
+    # A real admin/login panel serves a password input. Generic words like
+    # "login"/"username" appear on countless normal pages (and frameworks route
+    # unknown paths to profile pages), so require an actual password field.
+    if not _looks_html(r):
+        return False
+    return re.search(r'''<input[^>]+type\s*=\s*["']password["']''', r.text[:20000], re.I) is not None
+
+def _v_phpmyadmin(r) -> bool:
+    # phpMyAdmin login page is unmistakable
+    return "phpmyadmin" in r.text[:8000].lower() and _v_login_panel(r)
 
 def _v_crossdomain(r) -> bool:
     # Public by design — only a misconfiguration if it trusts ANY origin via a
@@ -113,10 +121,10 @@ SENSITIVE_PATHS = [
     ("/swagger-ui.html",  "LOW",      _v_swagger_ui,   "Swagger UI publicly accessible"),
     ("/.DS_Store",        "LOW",      _v_ds_store,     ".DS_Store exposes a directory file listing"),
     ("/crossdomain.xml",  "MEDIUM",   _v_crossdomain,  "crossdomain.xml trusts ANY origin (wildcard)"),
-    ("/admin",            "LOW",      _v_admin_panel,  "Admin login panel reachable"),
-    ("/administrator",    "LOW",      _v_admin_panel,  "Administrator login panel reachable"),
-    ("/wp-admin",         "LOW",      _v_admin_panel,  "WordPress admin panel reachable"),
-    ("/phpmyadmin",       "LOW",      _v_admin_panel,  "phpMyAdmin panel reachable"),
+    ("/admin",            "LOW",      _v_login_panel,  "Admin login panel reachable"),
+    ("/administrator",    "LOW",      _v_login_panel,  "Administrator login panel reachable"),
+    ("/wp-admin",         "LOW",      _v_login_panel,  "WordPress admin panel reachable"),
+    ("/phpmyadmin",       "LOW",      _v_phpmyadmin,   "phpMyAdmin panel reachable"),
 ]
 
 SECURITY_HEADERS = {
