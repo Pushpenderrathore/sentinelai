@@ -1,18 +1,30 @@
 """
 Clones a Git repository and detects its tech stack.
-Replace the stubs below with real implementations before the demo.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
+
+def _repo_dest(scan_id: str) -> str:
+    return os.path.join(tempfile.gettempdir(), f"vulnsentinel_{scan_id}")
+
 
 def clone_repo(repo_url: str, scan_id: str) -> str:
-    dest = os.path.join(tempfile.gettempdir(), f"vulnsentinel_{scan_id}")
+    if not repo_url.startswith("https://"):
+        raise ValueError("Only https:// repository URLs are supported")
+
+    dest = _repo_dest(scan_id)
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}  # never hang on a credential prompt
     subprocess.run(
         [
             "git", "clone",
@@ -25,8 +37,20 @@ def clone_repo(repo_url: str, scan_id: str) -> str:
         check=True,
         capture_output=True,
         timeout=300,               # 5 minutes — enough for any large repo
+        env=env,
     )
     return dest
+
+
+def cleanup_repo(scan_id: str) -> None:
+    """Delete the cloned repo for a scan, if it exists. Never raises."""
+    dest = _repo_dest(scan_id)
+    try:
+        if os.path.isdir(dest):
+            shutil.rmtree(dest, ignore_errors=True)
+            logger.info("Cleaned up cloned repo %s", dest)
+    except Exception:
+        logger.warning("Failed to clean up %s", dest, exc_info=True)
 
 
 def detect_tech_stack(repo_path: str) -> dict:
@@ -49,8 +73,10 @@ def detect_tech_stack(repo_path: str) -> dict:
 
     pkg_file = path / "package.json"
     if pkg_file.exists():
-        import json
-        pkg = json.loads(pkg_file.read_text())
-        deps += list(pkg.get("dependencies", {}).keys())
+        try:
+            pkg = json.loads(pkg_file.read_text())
+            deps += list(pkg.get("dependencies", {}).keys())
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logger.warning("Unparseable package.json in %s", repo_path)
 
     return {"languages": languages, "dependencies": deps}

@@ -11,7 +11,13 @@ import urllib.parse
 from datetime import datetime, timezone
 
 import requests
+import urllib3
 from requests.exceptions import RequestException
+
+from .url_guard import assert_safe_target
+
+# Probes against scan targets intentionally use verify=False — silence the noise
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 SENSITIVE_PATHS = [
     "/.env",
@@ -50,29 +56,32 @@ _HEADERS = {"User-Agent": "SentinelAI-SecurityScanner/1.0"}
 
 
 def is_github_url(url: str) -> bool:
-    host = urllib.parse.urlparse(url).netloc.lower().lstrip("www.")
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
     return host == "github.com"
 
 
 def scan_website(url: str) -> list[dict]:
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
+    # Re-validate at scan time — blocks SSRF against internal hosts even if
+    # the caller skipped the request-level check.
+    url = assert_safe_target(url)
 
     parsed = urllib.parse.urlparse(url)
     base_url = f"{parsed.scheme}://{parsed.netloc}"
     findings: list[dict] = []
+    http = requests.Session()
+    http.headers.update(_HEADERS)
 
     # ── 1. Fetch root page ──────────────────────────────────────────────────
     try:
-        resp = requests.get(url, timeout=15, allow_redirects=True,
-                            verify=True, headers=_HEADERS)
+        resp = http.get(url, timeout=15, allow_redirects=True, verify=True)
     except requests.exceptions.SSLError:
         findings.append(_f(url, "CRITICAL", "A02:2021-Cryptographic Failures",
                           "SSL/TLS certificate is invalid or self-signed",
                           "HTTPS handshake failed — browser would show security warning"))
         try:
-            resp = requests.get(url, timeout=15, allow_redirects=True,
-                                verify=False, headers=_HEADERS)
+            resp = http.get(url, timeout=15, allow_redirects=True, verify=False)
         except RequestException as e:
             findings.append(_f(url, "HIGH", "connectivity",
                               f"Could not reach website: {e}", ""))
@@ -151,8 +160,8 @@ def scan_website(url: str) -> list[dict]:
                       "/backup.sql", "/dump.sql", "/database.sql"}
     for path in SENSITIVE_PATHS:
         try:
-            r = requests.get(f"{base_url}{path}", timeout=6, allow_redirects=False,
-                             verify=False, headers=_HEADERS)
+            r = http.get(f"{base_url}{path}", timeout=6, allow_redirects=False,
+                         verify=False)
             if r.status_code in (200, 206):
                 sev = "CRITICAL" if path in critical_paths else "HIGH"
                 findings.append(_f(f"{base_url}{path}", sev,

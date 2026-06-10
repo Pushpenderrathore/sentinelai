@@ -14,13 +14,17 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # ── Module-level state ────────────────────────────────────────────────────────
+# Guarded by _state_lock — LangGraph nodes run in worker threads, so concurrent
+# scans can hit the router simultaneously.
 
+_state_lock = threading.Lock()
 _groq_llm   = None
 _ollama_llm = None
 _active_backend:  str        = "groq"
@@ -31,24 +35,26 @@ _GROQ_RETRY_SECS: int        = 1800   # retry Groq after 30 min
 
 def _build_groq():
     global _groq_llm
-    if _groq_llm is None:
-        from langchain_groq import ChatGroq
-        _groq_llm = ChatGroq(
-            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-            temperature=0,
-        )
-    return _groq_llm
+    with _state_lock:
+        if _groq_llm is None:
+            from langchain_groq import ChatGroq
+            _groq_llm = ChatGroq(
+                model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                temperature=0,
+            )
+        return _groq_llm
 
 
 def _build_ollama():
     global _ollama_llm
-    if _ollama_llm is None:
-        from langchain_ollama import ChatOllama
-        model    = os.getenv("OLLAMA_MODEL", "llama3.2")
-        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        logger.info("Connecting to Ollama at %s model=%s", base_url, model)
-        _ollama_llm = ChatOllama(model=model, base_url=base_url, temperature=0)
-    return _ollama_llm
+    with _state_lock:
+        if _ollama_llm is None:
+            from langchain_ollama import ChatOllama
+            model    = os.getenv("OLLAMA_MODEL", "llama3.2")
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            logger.info("Connecting to Ollama at %s model=%s", base_url, model)
+            _ollama_llm = ChatOllama(model=model, base_url=base_url, temperature=0)
+        return _ollama_llm
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -95,17 +101,18 @@ def invoke_llm(messages: list) -> Any:
     - After _GROQ_RETRY_SECS the next call will probe Groq again.
     - If both backends fail, raises RuntimeError with install instructions.
     """
-    global _active_backend, _groq_failed_at
+    global _active_backend, _groq_failed_at, _groq_llm
 
     # Auto-retry Groq after cooldown
-    if _active_backend == "ollama" and _groq_cooldown_elapsed():
-        logger.info("Groq cooldown elapsed — probing Groq again")
-        _active_backend  = "groq"
-        _groq_failed_at  = None
-        global _groq_llm
-        _groq_llm = None  # force fresh client
+    with _state_lock:
+        if _active_backend == "ollama" and _groq_cooldown_elapsed():
+            logger.info("Groq cooldown elapsed — probing Groq again")
+            _active_backend  = "groq"
+            _groq_failed_at  = None
+            _groq_llm = None  # force fresh client
+        backend = _active_backend
 
-    if _active_backend == "groq":
+    if backend == "groq":
         try:
             return _build_groq().invoke(messages)
         except Exception as exc:
@@ -113,8 +120,9 @@ def invoke_llm(messages: list) -> Any:
                 logger.warning(
                     "Groq unavailable (%s) — switching to Ollama offline model", exc
                 )
-                _active_backend = "ollama"
-                _groq_failed_at = time.time()
+                with _state_lock:
+                    _active_backend = "ollama"
+                    _groq_failed_at = time.time()
                 # fall through to Ollama below
             else:
                 raise   # real error (bad prompt, auth, etc.) — don't swallow

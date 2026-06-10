@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import AsyncGenerator, Literal
+from typing import AsyncGenerator, Literal, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver

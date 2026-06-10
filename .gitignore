@@ -28,3 +28,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Auto-downloaded model weights
+backend/yolov8n.pt
+*.pt

@@ -323,6 +323,38 @@ npm run dev
 # → http://localhost:3000
 ```
 
+For a deployed frontend, point it at your backend:
+
+```env
+# frontend/.env.production
+NEXT_PUBLIC_API_URL=https://api.your-domain.com
+NEXT_PUBLIC_WS_URL=wss://api.your-domain.com
+```
+
+### Production deployment
+
+Set `ENV=production` in `backend/.env` — `run.sh` then runs uvicorn without
+auto-reload and with `WORKERS` worker processes. Key hardening knobs
+(all in `backend/.env.example`):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ALLOWED_ORIGINS` | `http://localhost:3000,...` | CORS allow-list for the frontend |
+| `MAX_CONCURRENT_SCANS` | `3` | Scans beyond this get HTTP 429 |
+| `SCAN_TIMEOUT_SECS` | `600` | Hard kill for a stuck scan pipeline |
+| `ANALYSIS_TIMEOUT_SECS` | `300` | Hard kill for a stuck exam analysis |
+| `SESSION_TTL_SECS` | `86400` | Finished scans/sessions purged from memory after this |
+| `ALLOW_PRIVATE_TARGETS` | `false` | SSRF guard — private/loopback/metadata IPs are blocked unless explicitly enabled for lab use |
+
+Notes:
+- Scan targets are DNS-resolved and rejected if they point at private,
+  loopback, link-local, or cloud-metadata addresses (SSRF protection).
+- Cloned repos are deleted from the temp dir as soon as a scan finishes.
+- State is in-process memory: run a single backend instance (`WORKERS=1`)
+  unless you move scan/session state to Redis or a database — with multiple
+  workers, WebSocket connections may land on a worker that doesn't hold the
+  session.
+
 ---
 
 ## How It Works

@@ -1,7 +1,5 @@
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
-celery[redis]>=5.4.0
-redis>=5.0.0
 
 # LangGraph + LLM
 langgraph>=0.1.0
@@ -12,6 +10,13 @@ langchain-core>=0.2.0
 # Static analysis
 bandit>=1.7.9
 semgrep>=1.75.0
+
+# Website scanning
+requests>=2.32.0
+
+# Phone detection (YOLOv8 on webcam frames)
+ultralytics>=8.2.0
+pillow>=10.0.0
 
 # Utilities
 pydantic>=2.7.0
