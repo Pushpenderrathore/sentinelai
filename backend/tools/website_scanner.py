@@ -88,8 +88,10 @@ def _v_admin_panel(r) -> bool:
     return any(k in t for k in ("login", "password", "sign in", "username", "phpmyadmin", "dashboard"))
 
 def _v_crossdomain(r) -> bool:
-    # Public by design — only a misconfiguration if it trusts ANY origin
-    return re.search(r'allow-access-from\s+domain\s*=\s*["\']\*', r.text[:2000]) is not None
+    # Public by design — only a misconfiguration if it trusts ANY origin via a
+    # bare domain="*". Subdomain wildcards like "*.example.com" are legitimate
+    # scoping and must NOT match.
+    return re.search(r'''allow-access-from\s+domain\s*=\s*(["'])\*\1''', r.text[:4000]) is not None
 
 
 # (path, severity, validator, human-readable label)
@@ -275,8 +277,15 @@ def scan_website(url: str) -> list[dict]:
                 if expires_str:
                     expires = datetime.strptime(expires_str, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
                     days_left = (expires - datetime.now(timezone.utc)).days
-                    if days_left < 30:
-                        sev = "CRITICAL" if days_left < 7 else "HIGH"
+                    # Modern certs are short-lived and auto-renew (Let's Encrypt
+                    # 90-day, etc.), so a cert 2+ weeks out is normal — only warn
+                    # when expiry is genuinely imminent to avoid false alarms.
+                    if days_left < 0:
+                        findings.append(_f(url, "CRITICAL", "A02:2021-Cryptographic Failures",
+                                          f"SSL certificate has EXPIRED ({abs(days_left)} days ago)",
+                                          f"notAfter: {expires_str}"))
+                    elif days_left < 14:
+                        sev = "HIGH" if days_left < 3 else "MEDIUM"
                         findings.append(_f(url, sev, "A02:2021-Cryptographic Failures",
                                           f"SSL certificate expires in {days_left} days",
                                           f"notAfter: {expires_str}"))
