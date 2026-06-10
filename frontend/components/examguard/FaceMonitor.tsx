@@ -6,23 +6,26 @@ interface Props {
   onFaceEvent:    (faceCount: number, confidence: number) => void
   onPhoneEvent?:  (confidence: number) => void
   active:         boolean
-  sendFrame?:     (jpeg_b64: string) => void   // caller provides WS send for frames
 }
 
 type ModelStatus = "loading" | "ready" | "error"
 
-export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active, sendFrame }: Props) {
+// coco-ssd label for a phone; detection runs entirely in the browser (WebGL)
+const PHONE_CLASS      = "cell phone"
+const PHONE_CONF_MIN   = 0.5
+
+export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props) {
   const videoRef    = useRef<HTMLVideoElement>(null)
   const canvasRef   = useRef<HTMLCanvasElement>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const phoneModelRef = useRef<unknown>(null)   // coco-ssd model, lazy-loaded
+  const phoneHideRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const onFaceEventRef  = useRef(onFaceEvent)
   const onPhoneEventRef = useRef(onPhoneEvent)
-  const sendFrameRef    = useRef(sendFrame)
 
   useEffect(() => { onFaceEventRef.current  = onFaceEvent  }, [onFaceEvent])
   useEffect(() => { onPhoneEventRef.current = onPhoneEvent }, [onPhoneEvent])
-  useEffect(() => { sendFrameRef.current    = sendFrame    }, [sendFrame])
 
   const [camError,     setCamError]     = useState<string | null>(null)
   const [streaming,    setStreaming]     = useState(false)
@@ -34,7 +37,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active, sendFra
   useEffect(() => {
     if (!active) return
     let cancelled = false
-    async function loadFace() {
+    async function loadModels() {
       try {
         const faceapi = await import("@vladmandic/face-api")
         await faceapi.nets.tinyFaceDetector.loadFromUri("/models")
@@ -43,8 +46,17 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active, sendFra
         console.error("[FaceMonitor] face-api load failed:", e)
         if (!cancelled) setModelStatus("error")
       }
+      // Phone detector loads in the background — non-fatal if it fails
+      try {
+        await import("@tensorflow/tfjs")
+        const cocoSsd = await import("@tensorflow-models/coco-ssd")
+        const model = await cocoSsd.load({ base: "lite_mobilenet_v2" })
+        if (!cancelled) phoneModelRef.current = model
+      } catch (e) {
+        console.warn("[FaceMonitor] phone model (coco-ssd) load failed:", e)
+      }
     }
-    loadFace()
+    loadModels()
     return () => { cancelled = true }
   }, [active])
 
@@ -75,9 +87,6 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active, sendFra
   useEffect(() => {
     if (!streaming || modelStatus !== "ready") return
 
-    // Offscreen canvas for JPEG capture
-    const captureCanvas = document.createElement("canvas")
-
     async function detect() {
       if (!videoRef.current) return
       try {
@@ -93,27 +102,25 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active, sendFra
         setFaceCount(count)
         onFaceEventRef.current(count, parseFloat(bestScore.toFixed(2)))
 
-        // ── Send frame to backend for YOLOv8 phone detection ──
-        if (sendFrameRef.current && videoRef.current.readyState >= 2) {
-          const vw = videoRef.current.videoWidth  || 640
-          const vh = videoRef.current.videoHeight || 480
-          // Scale down to 320×240 for the JPEG — plenty for YOLO
-          captureCanvas.width  = 320
-          captureCanvas.height = 240
-          const ctx = captureCanvas.getContext("2d")
-          if (ctx) {
-            ctx.drawImage(videoRef.current, 0, 0, 320, 240)
-            captureCanvas.toBlob((blob) => {
-              if (!blob) return
-              const reader = new FileReader()
-              reader.onloadend = () => {
-                const b64 = (reader.result as string).split(",")[1]
-                sendFrameRef.current!({ jpeg_b64: b64 } as never)
-              }
-              reader.readAsDataURL(blob)
-            }, "image/jpeg", 0.7)
+        // ── Phone detection (coco-ssd, in-browser) ─────
+        if (phoneModelRef.current && videoRef.current.readyState >= 2) {
+          try {
+            const model = phoneModelRef.current as {
+              detect: (el: HTMLVideoElement) => Promise<{ class: string; score: number }[]>
+            }
+            const predictions = await model.detect(videoRef.current)
+            const phone = predictions.find(
+              (p) => p.class === PHONE_CLASS && p.score >= PHONE_CONF_MIN,
+            )
+            if (phone) {
+              setPhoneVisible(true)
+              if (phoneHideRef.current) clearTimeout(phoneHideRef.current)
+              phoneHideRef.current = setTimeout(() => setPhoneVisible(false), 6000)
+              onPhoneEventRef.current?.(parseFloat(phone.score.toFixed(2)))
+            }
+          } catch (e) {
+            console.warn("[FaceMonitor] phone detection frame failed:", e)
           }
-          void vw  // suppress unused var warning
         }
 
         // ── Draw face boxes ───────────────────────────
@@ -150,18 +157,6 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active, sendFra
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
   }, [streaming, modelStatus])
-
-  // Show/hide phone badge based on parent callback firing
-  // (parent flips phoneVisible via the alert coming back from server)
-  useEffect(() => {
-    const orig = onPhoneEventRef.current
-    onPhoneEventRef.current = (conf: number) => {
-      setPhoneVisible(true)
-      orig?.(conf)
-      // Auto-hide badge after 6s if no new detection
-      setTimeout(() => setPhoneVisible(false), 6000)
-    }
-  }, [])
 
   // ── Render ─────────────────────────────────────────────────
 

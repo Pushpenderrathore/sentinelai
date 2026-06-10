@@ -34,8 +34,6 @@ ExamGuard analysis socket (/ws/exam/{id}/analysis):
 from __future__ import annotations
 
 import asyncio
-import base64
-import io
 import logging
 import os
 import time
@@ -72,41 +70,10 @@ SCAN_TIMEOUT_SECS      = float(os.getenv("SCAN_TIMEOUT_SECS", "600"))
 ANALYSIS_TIMEOUT_SECS  = float(os.getenv("ANALYSIS_TIMEOUT_SECS", "300"))
 SESSION_TTL_SECS       = float(os.getenv("SESSION_TTL_SECS", str(24 * 3600)))
 JANITOR_INTERVAL_SECS  = float(os.getenv("JANITOR_INTERVAL_SECS", "600"))
-MAX_FRAME_B64_BYTES    = int(os.getenv("MAX_FRAME_B64_BYTES", str(2 * 1024 * 1024)))
 MAX_EVENTS_PER_LIST    = int(os.getenv("MAX_EVENTS_PER_LIST", "5000"))
 
-# ── YOLOv8n phone detector (lazy-loaded on first frame) ───────
-_yolo_model = None
-_yolo_lock  = asyncio.Lock()
-
-async def _get_yolo():
-    global _yolo_model
-    if _yolo_model is not None:
-        return _yolo_model
-    async with _yolo_lock:
-        if _yolo_model is None:
-            from ultralytics import YOLO
-            _yolo_model = YOLO("yolov8n.pt")
-            logger.info("YOLOv8n loaded — cell phone class 67 active")
-    return _yolo_model
-
-async def _detect_phone_in_frame(jpeg_b64: str) -> float:
-    """Return confidence 0-1 if a cell phone is found, else 0."""
-    try:
-        from PIL import Image
-        data   = base64.b64decode(jpeg_b64)
-        img    = Image.open(io.BytesIO(data)).convert("RGB")
-        model  = await _get_yolo()
-        # Run inference in a thread so we don't block the event loop
-        results = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: model(img, classes=[67], conf=0.25, verbose=False)
-        )
-        boxes = results[0].boxes
-        if boxes and len(boxes):
-            return float(boxes.conf.max().item())
-    except Exception as e:
-        logger.warning("YOLO frame analysis failed: %s", e)
-    return 0.0
+# Phone detection runs client-side (coco-ssd in the browser); the browser
+# sends a `phone_detected` event, handled below. No server-side ML needed.
 
 # ── In-process registries ─────────────────────────────────────
 _scans: Dict[str, dict] = {}           # VulnSentinel scan sessions
@@ -144,9 +111,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="SentinelAI", version="0.1.0", lifespan=lifespan)
 
 _default_origins = "http://localhost:3000,http://127.0.0.1:3000"
+# ALLOWED_ORIGIN_REGEX is handy for Vercel preview URLs, e.g.
+#   https://.*\.vercel\.app
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",") if o.strip()],
+    allow_origin_regex=os.getenv("ALLOWED_ORIGIN_REGEX") or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -664,26 +634,7 @@ async def ws_exam_events(websocket: WebSocket, exam_id: str) -> None:
                     session["immediate_alerts"].append(alert)
                     await _fan_out(entry, alert)
 
-            # ── Video frame → YOLOv8 phone detection ─────────
-            elif event_type == "video_frame":
-                jpeg_b64 = data.get("image", "")
-                if jpeg_b64 and len(jpeg_b64) > MAX_FRAME_B64_BYTES:
-                    logger.warning("Exam %s: video frame too large (%d bytes) — dropped",
-                                   exam_id, len(jpeg_b64))
-                elif jpeg_b64:
-                    conf = await _detect_phone_in_frame(jpeg_b64)
-                    if conf > 0:
-                        _append_capped(session.setdefault("phone_events", []), {
-                            "confidence": conf, "timestamp": data.get("timestamp", time.time())
-                        })
-                        phone_count = len(session["phone_events"])
-                        alert = check_phone_detected(phone_count, conf, data.get("timestamp", time.time()))
-                        if alert:
-                            await websocket.send_json(alert)
-                            session["immediate_alerts"].append(alert)
-                            await _fan_out(entry, alert)
-
-            # ── Phone detection ──────────────────────────────
+            # ── Phone detection (client-side coco-ssd) ───────
             elif event_type == "phone_detected":
                 _append_capped(session.setdefault("phone_events", []), data)
                 phone_count = len(session["phone_events"])

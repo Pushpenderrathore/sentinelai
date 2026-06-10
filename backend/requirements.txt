@@ -14,10 +14,6 @@ semgrep>=1.75.0
 # Website scanning
 requests>=2.32.0
 
-# Phone detection (YOLOv8 on webcam frames)
-ultralytics>=8.2.0
-pillow>=10.0.0
-
 # Utilities
 pydantic>=2.7.0
 python-dotenv>=1.0.0

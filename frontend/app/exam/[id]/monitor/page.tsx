@@ -35,16 +35,17 @@ export default function InvigilatorMonitor({ params }: { params: { id: string } 
     `${WS_BASE}/ws/exam/${examId}/monitor`,
     (msg) => {
       if (msg.type === "immediate_alert") {
-        setAlerts((prev) => [msg as unknown as Alert, ...prev])
+        const alert = msg as unknown as Alert
+        setAlerts((prev) => [alert, ...prev])
 
         // Increment phone counter directly when a phone alert arrives
-        if ((msg as Alert).title?.toLowerCase().includes("phone")) {
+        if (alert.title?.toLowerCase().includes("phone")) {
           setPhoneCount((n) => n + 1)
         }
 
         // Degrade score on alerts
         setScore((s) => {
-          const sev = (msg as Alert).severity
+          const sev = alert.severity
           const drop = sev === "CRITICAL" ? 20 : sev === "WARNING" ? 8 : 2
           const next = Math.max(0, s - drop)
           if (next < 50) setVerdict("FLAGGED")
