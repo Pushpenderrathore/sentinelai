@@ -1,0 +1,31 @@
+# Render Blueprint — deploys the SentinelAI FastAPI backend.
+# Push this repo to GitHub, then in Render: New + → Blueprint → pick this repo.
+# Set the secret env vars (GROQ_API_KEY, ALLOWED_ORIGINS) in the dashboard.
+services:
+  - type: web
+    name: sentinelai-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: ENV
+        value: production
+      # Your Groq API key — set in the Render dashboard (kept secret)
+      - key: GROQ_API_KEY
+        sync: false
+      # Your Vercel frontend URL(s), comma-separated, e.g.
+      #   https://sentinelai.vercel.app
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # Also allow Vercel preview deployments (project-*.vercel.app)
+      - key: ALLOWED_ORIGIN_REGEX
+        value: 'https://.*\.vercel\.app'
+      # Block scanning of private/internal addresses (SSRF protection)
+      - key: ALLOW_PRIVATE_TARGETS
+        value: "false"
