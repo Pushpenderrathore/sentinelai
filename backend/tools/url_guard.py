@@ -22,8 +22,19 @@ def _allow_private() -> bool:
     return os.getenv("ALLOW_PRIVATE_TARGETS", "false").lower() in ("1", "true", "yes")
 
 
+# RFC 6052 well-known NAT64 prefix — DNS64 resolvers synthesize AAAA records
+# for IPv4-only hosts by embedding the real IPv4 in the low 32 bits.
+_NAT64_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _is_public_ip(ip: str) -> bool:
     addr = ipaddress.ip_address(ip)
+    if addr.version == 6:
+        if addr.ipv4_mapped is not None:
+            addr = addr.ipv4_mapped
+        elif addr in _NAT64_PREFIX:
+            # Judge the embedded IPv4 target, not the synthetic IPv6 wrapper
+            addr = ipaddress.ip_address(int(addr) & 0xFFFFFFFF)
     return not (
         addr.is_private
         or addr.is_loopback
