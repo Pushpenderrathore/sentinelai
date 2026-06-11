@@ -53,9 +53,9 @@ This Code of Conduct is inspired by the Contributor Covenant and adapted for the
 
 SentinelAI Project
 
-Auther: Saee Nikam
-Co-Auther: Sonika Kaswan
-
-Maintainer: Pushpender Singh
+Auther: Saee Nikam          
+Co-Auther: Sonika Kaswan                   
+                   
+Maintainer: Pushpender Singh                            
 © 2026 Saee Nikam. All rights reserved.
 
