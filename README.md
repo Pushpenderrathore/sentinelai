@@ -11,7 +11,7 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously — in
 ## Table of Contents
 
 - [Modules](#modules)
-- [Demo](#demo)
+- [Demo](#demo
 - [ML Integration](#ml-integration)
 - [VulnSentinel — Screenshots](#-vulnsentinel--screenshots)
 - [ExamGuard — Screenshots](#-examguard--screenshots)
