@@ -12,6 +12,7 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously — in
 
 - [Modules](#modules)
 - [Demo](#demo)
+- [ML Integration](#ml-integration)
 - [VulnSentinel — Screenshots](#-vulnsentinel--screenshots)
 - [ExamGuard — Screenshots](#-examguard--screenshots)
 - [Sample Scan Results](#vulnsentinel--dual-scan-mode)
@@ -51,7 +52,8 @@ A proctoring system that monitors online exams in real time using tab-switch det
 - Real-time ML models power live threat detection and exam monitoring across the frontend
 - Client-side inference keeps sensitive video data local and trims latency for face and mobile-phone analysis
 - Browser-based models run directly in the app for fast, responsive results
-- LLM-based reasoning provides context-aware security decisions, remediation guidance, and intelligent alerting
+- LLM-based reasoning provides post-session analysis and remediation guidance
+- Real-time alerts are rule-based and handled by the backend
 
 ---
 
