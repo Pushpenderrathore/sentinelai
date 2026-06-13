@@ -46,6 +46,15 @@ A proctoring system that monitors online exams in real time using tab-switch det
 
 ---
 
+## ML Integration
+
+- Real-time ML models power live threat detection and exam monitoring across the frontend
+- Client-side inference keeps sensitive video data local and trims latency for face and mobile-phone analysis
+- Browser-based models run directly in the app for fast, responsive results
+- LLM-based reasoning provides context-aware security decisions, remediation guidance, and intelligent alerting
+
+---
+
 ## Demo
 
 > 📹 **Demo video:** *(add link after recording)*
