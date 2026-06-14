@@ -34,6 +34,16 @@ export default function VulnCard({ vuln, patch }: { vuln: Vulnerability; patch?:
   const pill       = SEVERITY_PILL[vuln.severity] ?? "pill-low"
   const isPortScan = vuln.id?.startsWith("PORT-")
 
+  // A patch only has a meaningful code diff for source-code findings. Header/
+  // port/config issues come back with empty code (or a "No code provided…"
+  // placeholder) — for those we show the remediation text instead of empty boxes.
+  const origCode    = (patch?.original_code ?? "").trim()
+  const patchedCode = (patch?.patched_code ?? "").trim()
+  const isNoCode    = (s: string) => s === "" || /^no code provided/i.test(s)
+  const patchHasCode = !isNoCode(origCode) && !isNoCode(patchedCode)
+  const patchExpl    = (patch?.explanation ?? "").trim()
+  const showPatch    = !!patch && (patchHasCode || patchExpl.length > 0)
+
   return (
     <div className="border border-sentinel-border bg-sentinel-surface rounded-xl p-4 space-y-3 animate-slide-in">
 
@@ -126,29 +136,33 @@ export default function VulnCard({ vuln, patch }: { vuln: Vulnerability; patch?:
         </div>
       )}
 
-      {/* Patch */}
-      {patch && (
+      {/* Patch / remediation */}
+      {showPatch && (
         <details className="group">
           <summary className="text-xs text-sentinel-green cursor-pointer select-none flex items-center gap-1.5 hover:underline">
             <svg className="w-3.5 h-3.5 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/>
             </svg>
-            View suggested patch
+            {patchHasCode ? "View suggested patch" : "View remediation guidance"}
           </summary>
           <div className="mt-3 space-y-2 text-xs font-mono">
-            <div>
-              <div className="text-red-400/70 mb-1">- Original</div>
-              <pre className="bg-red-500/5 border border-red-500/20 rounded-lg p-3 text-red-400 overflow-x-auto whitespace-pre-wrap break-all">
-                {patch.original_code}
-              </pre>
-            </div>
-            <div>
-              <div className="text-green-400/70 mb-1">+ Patched</div>
-              <pre className="bg-green-500/5 border border-green-500/20 rounded-lg p-3 text-green-400 overflow-x-auto whitespace-pre-wrap break-all">
-                {patch.patched_code}
-              </pre>
-            </div>
-            <p className="text-sentinel-muted pt-1">{patch.explanation}</p>
+            {patchHasCode && (
+              <>
+                <div>
+                  <div className="text-red-400/70 mb-1">- Original</div>
+                  <pre className="bg-red-500/5 border border-red-500/20 rounded-lg p-3 text-red-400 overflow-x-auto whitespace-pre-wrap break-all">
+                    {origCode}
+                  </pre>
+                </div>
+                <div>
+                  <div className="text-green-400/70 mb-1">+ Patched</div>
+                  <pre className="bg-green-500/5 border border-green-500/20 rounded-lg p-3 text-green-400 overflow-x-auto whitespace-pre-wrap break-all">
+                    {patchedCode}
+                  </pre>
+                </div>
+              </>
+            )}
+            {patchExpl && <p className="text-sentinel-muted pt-1 leading-relaxed">{patchExpl}</p>}
           </div>
         </details>
       )}
