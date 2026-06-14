@@ -35,53 +35,96 @@ const modules = [
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center px-6 py-16">
+    <main className="min-h-screen flex flex-col items-center justify-center px-4 sm:px-6 py-16 sm:py-20">
       {/* Logo */}
-      <div className="text-center mb-16">
-        <div className="inline-flex items-center gap-3 mb-4">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sentinel-cyan to-sentinel-purple flex items-center justify-center">
-            <svg className="w-5 h-5 text-black" fill="currentColor" viewBox="0 0 20 20">
+      <div className="text-center mb-16 animate-fade-in">
+        <div className="inline-flex items-center gap-3 mb-6">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-sentinel-cyan to-sentinel-purple flex items-center justify-center shadow-lg shadow-cyan-500/30">
+            <svg className="w-6 h-6 text-black" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
             </svg>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">SentinelAI</h1>
+          <div>
+            <h1 className="text-4xl sm:text-5xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent">
+              SentinelAI
+            </h1>
+            <p className="text-sm text-slate-400 font-mono tracking-widest mt-1">AUTONOMOUS THREAT DETECTION</p>
+          </div>
         </div>
-        <p className="text-sentinel-muted text-lg max-w-md">
-          Autonomous threat detection — for code <span className="text-slate-400">&</span> academic integrity.
+        <p className="text-slate-400 text-lg max-w-lg mx-auto leading-relaxed">
+          Intelligent threat detection for <span className="text-slate-300 font-semibold">code security</span> and <span className="text-slate-300 font-semibold">academic integrity</span>
         </p>
       </div>
 
       {/* Module cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
-        {modules.map((mod) => (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-4xl">
+        {modules.map((mod, idx) => (
           <Link
             key={mod.href}
             href={mod.href}
-            className={`group relative rounded-2xl border bg-gradient-to-br p-8 transition-all duration-300 ${mod.color}`}
+            className="group relative rounded-2xl border bg-gradient-to-br p-8 transition-all duration-300 overflow-hidden animate-scale-in"
+            style={{ animationDelay: `${idx * 0.1}s` }}
           >
-            <div className={`${mod.accent} mb-5`}>{mod.icon}</div>
+            {/* Background gradient */}
+            <div className={`absolute inset-0 bg-gradient-to-br ${mod.color}`} />
+            
+            {/* Animated hover overlay */}
+            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-br from-white/10 to-transparent" />
 
-            <div className="flex items-center gap-3 mb-3">
-              <h2 className="text-xl font-semibold">{mod.label}</h2>
-              <span className={`text-xs px-2 py-0.5 rounded-full border ${mod.color} ${mod.accent} font-mono`}>
-                {mod.tag}
-              </span>
+            <div className="relative">
+              {/* Icon */}
+              <div className={`${mod.accent} mb-6 group-hover:scale-110 transition-transform duration-300`}>
+                {mod.icon}
+              </div>
+
+              {/* Header */}
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <div className="flex-grow">
+                  <h2 className="text-2xl font-bold text-white mb-2">{mod.label}</h2>
+                  <span className={`inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-full font-mono font-semibold border ${mod.color}`}>
+                    <span className="w-2 h-2 rounded-full bg-current" />
+                    {mod.tag}
+                  </span>
+                </div>
+              </div>
+
+              {/* Description */}
+              <p className="text-slate-200 text-sm leading-relaxed mb-6">
+                {mod.description}
+              </p>
+
+              {/* Stats */}
+              <div className="grid grid-cols-3 gap-3 mb-6 p-3 rounded-lg bg-white/5 backdrop-blur border border-white/10">
+                {Object.entries(mod.stats).map(([key, value]) => (
+                  <div key={key} className="text-center">
+                    <p className="text-xs text-slate-400 font-mono uppercase">{key}</p>
+                    <p className={`text-sm font-bold mt-1 ${mod.accent}`}>{value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* CTA */}
+              <div className="flex items-center gap-2 font-semibold group-hover:gap-3 transition-all">
+                <span className={`${mod.accent}`}>
+                  {mod.cta.split("→")[0].trim()}
+                </span>
+                <span className={`${mod.accent} group-hover:translate-x-1 transition-transform`}>→</span>
+              </div>
             </div>
-
-            <p className="text-sentinel-muted text-sm leading-relaxed mb-6">
-              {mod.description}
-            </p>
-
-            <span className={`text-sm font-medium ${mod.accent} group-hover:underline`}>
-              {mod.cta}
-            </span>
           </Link>
         ))}
       </div>
 
-      <p className="mt-12 text-xs text-sentinel-muted font-mono">
-        FAR AWAY 2026 · Team Zen Hackers · Agentic &amp; Autonomous Systems
-      </p>
+      {/* Footer */}
+      <div className="mt-16 text-center space-y-2">
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10">
+          <span className="w-2 h-2 rounded-full bg-sentinel-cyan animate-pulse" />
+          <p className="text-xs font-mono text-slate-400">Powered by Multi-Agent AI</p>
+        </div>
+        <p className="text-xs text-slate-500 font-mono">
+          FAR AWAY 2026 · Team Zen Hackers · Agentic &amp; Autonomous Systems
+        </p>
+      </div>
     </main>
   )
 }

@@ -44,8 +44,13 @@ export default function ExamPage() {
       </div>
 
       <div className="relative z-10 max-w-2xl mx-auto">
+        {/* Skip to main content */}
+        <a href="#exam-form" className="sr-only focus:not-sr-only focus:block focus:mb-4 focus:px-4 focus:py-2 focus:bg-purple-400 focus:text-black focus:rounded-lg focus:font-semibold">
+          Skip to exam form
+        </a>
+
         {/* Header */}
-        <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-mono text-slate-400 hover:text-purple-400 mb-8 transition-colors">
+        <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-mono text-slate-400 hover:text-purple-400 mb-8 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-400/50 rounded px-2 py-1">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
@@ -70,13 +75,18 @@ export default function ExamPage() {
         </div>
 
         {/* Main form card */}
-        <form onSubmit={handleSubmit} className="glass-card p-6 sm:p-8 mb-8 space-y-6">
+        <form id="exam-form" onSubmit={handleSubmit} className="glass-card p-6 sm:p-8 mb-8 space-y-8">
           {/* Student Information Section */}
           <div>
-            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 flex items-center justify-center text-xs">👤</span>
-              Student Information
-            </h3>
+            <div className="mb-5 flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-purple-500/30 flex items-center justify-center">
+                <span className="text-lg">👤</span>
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Student Information</h3>
+                <p className="text-xs text-slate-500">Enter your details for session identification</p>
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               {[
@@ -84,72 +94,106 @@ export default function ExamPage() {
                 { key: "student_id",   label: "Student ID",   placeholder: "e.g., STU-2024-001", type: "text" },
               ].map(({ key, label, placeholder, type }) => (
                 <div key={key}>
-                  <label className="block text-xs font-medium text-slate-300 mb-2">{label}</label>
+                  <label htmlFor={key} className="block text-xs font-semibold text-slate-300 mb-2 uppercase tracking-wide">{label}</label>
                   <input
+                    id={key}
                     type={type}
                     value={(form as Record<string, string | number>)[key] as string}
                     onChange={(e) => set(key, e.target.value)}
                     placeholder={placeholder}
                     required
-                    className="input-glass w-full"
+                    className="input-glass w-full transition-all focus:ring-2 focus:ring-purple-400/50"
+                    aria-label={label}
+                    aria-required="true"
                   />
                 </div>
               ))}
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-2">College ID</label>
+              <label htmlFor="college_id" className="block text-xs font-semibold text-slate-300 mb-2 uppercase tracking-wide">College ID</label>
               <input
+                id="college_id"
                 type="text"
                 value={form.college_id}
                 onChange={(e) => set("college_id", e.target.value)}
                 placeholder="e.g., CLG-AKGEC-2024"
                 required
-                className="input-glass w-full"
+                className="input-glass w-full transition-all focus:ring-2 focus:ring-purple-400/50"
+                aria-label="College ID"
+                aria-required="true"
               />
             </div>
           </div>
 
           {/* Exam Settings Section */}
-          <div className="border-t border-white/10 pt-6">
-            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 flex items-center justify-center text-xs">⏱️</span>
-              Exam Settings
-            </h3>
-
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <label className="text-xs font-medium text-slate-300">Duration</label>
-                <span className="text-sm font-bold text-purple-400">{form.duration_minutes} minutes</span>
+          <div className="border-t border-white/10 pt-8">
+            <div className="mb-5 flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-purple-500/30 flex items-center justify-center">
+                <span className="text-lg">⏱️</span>
               </div>
-              <input
-                type="range"
-                min={15} max={180} step={15}
-                value={form.duration_minutes}
-                onChange={(e) => set("duration_minutes", parseInt(e.target.value))}
-                className="w-full accent-purple-500"
-              />
-              <div className="flex justify-between text-xs text-slate-500 mt-2">
-                <span>15 min</span>
-                <span>180 min</span>
+              <div>
+                <h3 className="text-sm font-bold text-white">Exam Configuration</h3>
+                <p className="text-xs text-slate-500">Set the duration and monitoring preferences</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <label htmlFor="duration-slider" className="text-xs font-semibold text-slate-300 uppercase tracking-wide">Exam Duration</label>
+                  <span className="text-sm font-bold bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">
+                    {form.duration_minutes} minutes
+                  </span>
+                </div>
+                <input
+                  id="duration-slider"
+                  type="range"
+                  min={15}
+                  max={180}
+                  step={15}
+                  value={form.duration_minutes}
+                  onChange={(e) => set("duration_minutes", parseInt(e.target.value))}
+                  className="w-full h-2.5 bg-slate-800/50 rounded-full appearance-none cursor-pointer accent-purple-500"
+                  aria-label="Exam Duration in minutes"
+                  aria-valuenow={form.duration_minutes}
+                  aria-valuemin={15}
+                  aria-valuemax={180}
+                  aria-valuetext={`${form.duration_minutes} minutes`}
+                />
+                <div className="flex justify-between text-xs text-slate-500 mt-3 font-mono">
+                  <span>15 min</span>
+                  <span>90 min (Recommended)</span>
+                  <span>180 min</span>
+                </div>
+              </div>
+
+              {/* Monitoring info box */}
+              <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                <p className="text-xs text-slate-300 flex items-start gap-2">
+                  <span className="text-purple-400 font-bold mt-0.5">ℹ</span>
+                  <span>Real-time monitoring enabled: Face detection, keystroke analysis, and tab activity will be recorded.</span>
+                </p>
               </div>
             </div>
           </div>
 
           {/* Error message */}
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-start gap-2">
-              <span className="text-red-400 mt-0.5">✕</span>
-              <p className="text-sm text-red-300">{error}</p>
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 flex items-start gap-3" role="alert">
+              <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+              <p className="text-sm text-red-300 font-medium">{error}</p>
             </div>
           )}
 
           {/* Submit button */}
-          <div className="pt-2">
+          <div className="pt-4">
             <button
               type="submit"
-              disabled={loading}
-              className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              disabled={loading || !form.student_id || !form.student_name || !form.college_id}
+              className="btn-primary w-full flex items-center justify-center gap-2"
             >
               {loading ? (
                 <>
@@ -157,14 +201,14 @@ export default function ExamPage() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                   </svg>
-                  Creating session...
+                  <span>Creating Exam Session...</span>
                 </>
               ) : (
                 <>
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                   </svg>
-                  Start Proctored Exam
+                  <span>Start Proctored Exam</span>
                 </>
               )}
             </button>

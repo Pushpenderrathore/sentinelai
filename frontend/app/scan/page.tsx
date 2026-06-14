@@ -83,8 +83,13 @@ export default function ScanPage() {
       </div>
 
       <div className="relative z-10 max-w-2xl mx-auto">
+        {/* Skip to main content */}
+        <a href="#scan-form" className="sr-only focus:not-sr-only focus:block focus:mb-4 focus:px-4 focus:py-2 focus:bg-sentinel-cyan focus:text-black focus:rounded-lg focus:font-semibold">
+          Skip to scan form
+        </a>
+
         {/* Header */}
-        <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-mono text-slate-400 hover:text-cyan-400 mb-8 transition-colors">
+        <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-mono text-slate-400 hover:text-cyan-400 mb-8 transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-400/50 rounded px-2 py-1">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
@@ -109,10 +114,12 @@ export default function ScanPage() {
         </div>
 
         {/* Main form card */}
-        <form onSubmit={handleSubmit} className="glass-card p-6 sm:p-8 mb-8 space-y-4">
+        <form id="scan-form" onSubmit={handleSubmit} className="glass-card p-6 sm:p-8 mb-8 space-y-6">
           {/* URL Input */}
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-2">Target URL</label>
+            <label htmlFor="target-url" className="block text-xs font-semibold text-slate-300 mb-3 uppercase tracking-wide">
+              Target URL
+            </label>
             <div className="relative group">
               <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
                 {scanType === "github" ? (
@@ -131,16 +138,20 @@ export default function ScanPage() {
               </div>
 
               <input
+                id="target-url"
                 type="text"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="github.com/owner/repo  or  https://example.com"
-                className="input-glass pl-11 pr-32"
+                className={`input-glass pl-11 pr-32 w-full transition-all focus:ring-2 focus:ring-cyan-400/50 ${validationErr ? "border-yellow-500/50 focus:border-yellow-500/50 focus:ring-yellow-500/30" : ""}`}
+                aria-label="Target URL for security scan"
+                aria-invalid={!!validationErr}
+                aria-describedby={validationErr ? "url-error" : "url-help"}
               />
 
               {scanType && (
                 <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none">
-                  <span className={`text-xs font-mono px-3 py-1.5 rounded-lg border ${
+                  <span className={`text-xs font-mono px-3 py-1.5 rounded-lg border transition-all ${
                     scanType === "github"
                       ? "text-cyan-300 border-cyan-500/30 bg-cyan-500/10"
                       : "text-purple-300 border-purple-500/30 bg-purple-500/10"
@@ -151,35 +162,42 @@ export default function ScanPage() {
               )}
             </div>
 
-            {validationErr && (
-              <p className="text-yellow-400 text-xs font-medium mt-2 flex items-center gap-1">
-                <span>⚠️</span> {validationErr}
+            {validationErr ? (
+              <p id="url-error" className="text-yellow-400 text-xs font-semibold mt-2 flex items-center gap-1.5" role="alert">
+                <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                {validationErr}
               </p>
-            )}
+            ) : null}
             {error && (
-              <p className="text-red-400 text-xs font-medium mt-2 flex items-center gap-1">
-                <span>✕</span> {error}
+              <p id="url-error" className="text-red-400 text-xs font-semibold mt-2 flex items-center gap-1.5" role="alert">
+                <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+                {error}
               </p>
             )}
           </div>
 
           {/* Quick examples */}
-          <div className="pt-2">
-            <p className="text-xs text-slate-500 font-medium mb-2">Try these:</p>
-            <div className="flex flex-wrap gap-2">
+          <div className="pt-2 border-t border-white/10">
+            <p className="text-xs text-slate-500 font-semibold mb-3 uppercase tracking-wide">Quick Start Examples</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {[
-                { label: "OWASP Mutillidae", url: "https://github.com/webpwnized/mutillidae" },
-                { label: "WebGoat", url: "https://github.com/WebGoat/WebGoat" },
-                { label: "example.com", url: "https://example.com" },
-              ].map(({ label, url: exUrl }) => (
+                { label: "OWASP Mutillidae", url: "https://github.com/webpwnized/mutillidae", icon: "📚" },
+                { label: "WebGoat", url: "https://github.com/WebGoat/WebGoat", icon: "🎓" },
+                { label: "Example Website", url: "https://example.com", icon: "🌐" },
+              ].map(({ label, url: exUrl, icon }) => (
                 <button
                   key={label}
                   type="button"
                   onClick={() => setUrl(exUrl)}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-slate-300
-                           hover:bg-white/10 hover:border-white/20 hover:text-white
-                           transition-all duration-300"
+                  className="text-xs px-3 py-2.5 rounded-lg bg-white/5 border border-white/10 text-slate-300
+                           hover:bg-white/10 hover:border-white/30 hover:text-white
+                           transition-all duration-300 flex items-center gap-2 font-medium"
                 >
+                  <span>{icon}</span>
                   {label}
                 </button>
               ))}
@@ -191,7 +209,11 @@ export default function ScanPage() {
             <button
               type="submit"
               disabled={loading || !url.trim() || !!validationErr}
-              className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className={`btn-primary w-full flex items-center justify-center gap-2 transition-all ${
+                loading || !url.trim() || !!validationErr
+                  ? "opacity-50 cursor-not-allowed"
+                  : ""
+              }`}
             >
               {loading ? (
                 <>
@@ -199,14 +221,14 @@ export default function ScanPage() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                   </svg>
-                  Initializing scan...
+                  <span>Initializing scan...</span>
                 </>
               ) : (
                 <>
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                   </svg>
-                  Launch Security Scan
+                  <span>Launch Security Scan</span>
                 </>
               )}
             </button>
@@ -214,39 +236,45 @@ export default function ScanPage() {
         </form>
 
         {/* Agent pipeline visualization */}
-        <div className="glass-card p-6">
-          <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 flex items-center justify-center text-xs">🤖</span>
-            Multi-Agent Pipeline
+        <div className="glass-card p-6 sm:p-8">
+          <h3 className="text-sm font-bold text-white mb-6 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 flex items-center justify-center">
+              <span className="text-lg">🤖</span>
+            </div>
+            Multi-Agent Security Pipeline
           </h3>
 
-          <div className="space-y-3">
+          <div className="relative space-y-4">
             {agents.map((agent, idx) => (
-              <div key={agent.name} className="flex gap-3 animate-in" style={{ animationDelay: `${idx * 0.1}s` }}>
-                {/* Step number */}
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 flex items-center justify-center flex-shrink-0">
-                  <span className="text-xs font-bold text-cyan-400">{idx + 1}</span>
-                </div>
-
+              <div key={agent.name} className="relative animate-slide-in" style={{ animationDelay: `${idx * 0.1}s` }}>
                 {/* Connector line */}
                 {idx < agents.length - 1 && (
-                  <div className="absolute left-[19px] top-[calc(100%)] w-0.5 h-6 bg-gradient-to-b from-cyan-500/50 to-transparent" />
+                  <div className="absolute left-4 top-10 w-0.5 h-8 bg-gradient-to-b from-cyan-500/50 to-transparent" />
                 )}
 
-                {/* Agent info */}
-                <div className="flex-grow">
-                  <p className="text-sm font-semibold text-white">{agent.name}</p>
-                  <p className="text-xs text-slate-400">{agent.desc}</p>
+                <div className="flex gap-4">
+                  {/* Step number */}
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 flex items-center justify-center flex-shrink-0 font-semibold text-cyan-400 text-sm">
+                    {idx + 1}
+                  </div>
+
+                  {/* Agent info */}
+                  <div className="flex-grow pt-0.5">
+                    <p className="text-sm font-semibold text-white">{agent.name}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{agent.desc}</p>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="mt-6 pt-6 border-t border-white/10">
-            <p className="text-xs text-slate-400 flex items-start gap-2">
-              <span className="mt-0.5">💡</span>
-              <span>Each agent specializes in a specific phase of the security audit. Results are synthesized into comprehensive findings with remediation guidance.</span>
-            </p>
+          <div className="mt-8 pt-6 border-t border-white/10">
+            <div className="flex gap-3 p-3 rounded-lg bg-white/5 border border-white/10">
+              <span className="text-lg flex-shrink-0 mt-0.5">💡</span>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Each agent specializes in a specific phase of the security audit. Results are synthesized into comprehensive findings with remediation guidance and exploitability scoring.
+              </p>
+            </div>
           </div>
         </div>
       </div>

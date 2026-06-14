@@ -5,6 +5,7 @@ const nextConfig = {
     NEXT_PUBLIC_WS_URL:  process.env.NEXT_PUBLIC_WS_URL  || "ws://localhost:8000",
   },
   transpilePackages: ["@vladmandic/face-api", "@tensorflow-models/coco-ssd"],
+  turbopack: {},
   webpack: (config, { isServer }) => {
     // Required for MediaPipe WASM modules
     config.experiments = { ...config.experiments, asyncWebAssembly: true }

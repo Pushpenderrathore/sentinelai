@@ -72,14 +72,14 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
   return (
     <div className="flex flex-col h-screen bg-sentinel-bg overflow-hidden">
       {/* Top bar */}
-      <header className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-sentinel-border bg-sentinel-surface">
-        <a href="/scan" className="text-sentinel-muted hover:text-white transition-colors text-sm">
+      <header className="shrink-0 flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-sentinel-border bg-sentinel-surface overflow-x-auto">
+        <a href="/scan" className="text-sentinel-muted hover:text-white transition-colors text-sm font-semibold shrink-0">
           ← VulnSentinel
         </a>
         <span className="text-sentinel-border">·</span>
-        <span className="text-xs font-mono text-sentinel-muted">scan/{scanId}</span>
+        <span className="text-xs font-mono text-sentinel-muted shrink-0">scan/{scanId}</span>
 
-        <div className="ml-auto flex items-center gap-4">
+        <div className="ml-auto flex items-center gap-2 sm:gap-4 shrink-0">
           {/* WS status */}
           <span className={`flex items-center gap-1.5 text-xs font-mono ${
             status === "open" ? "text-sentinel-green" :
@@ -90,44 +90,44 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
               status === "open"   ? "bg-sentinel-green animate-pulse" :
               status === "closed" ? "bg-sentinel-muted" : "bg-sentinel-red"
             }`} />
-            {status.toUpperCase()}
+            <span className="hidden sm:inline">{status.toUpperCase()}</span>
           </span>
 
           {/* Active node */}
           {activeNode && (
-            <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-sentinel-cyan/10 text-sentinel-cyan border border-sentinel-cyan/20 animate-pulse">
+            <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-sentinel-cyan/10 text-sentinel-cyan border border-sentinel-cyan/20 animate-pulse truncate">
               {activeNode.replace("_", " ")}
             </span>
           )}
 
           {/* Risk badge */}
           {report?.summary && (
-            <span className={`text-xs font-mono px-2 py-0.5 rounded-full border ${
+            <span className={`text-xs font-mono px-2 py-0.5 rounded-full border shrink-0 ${
               report.summary.overall_risk === "CRITICAL" ? "pill-critical" :
               report.summary.overall_risk === "HIGH"     ? "pill-high"     :
               report.summary.overall_risk === "MEDIUM"   ? "pill-medium"   : "pill-low"
             }`}>
-              {report.summary.overall_risk} RISK · {report.summary.risk_score}/100
+              {report.summary.overall_risk} · {report.summary.risk_score}
             </span>
           )}
         </div>
       </header>
 
-      {/* Main split */}
-      <div className="flex flex-1 overflow-hidden gap-0">
-        {/* Left: agent feed */}
-        <div className="w-[55%] p-4 overflow-hidden">
+      {/* Main split - responsive */}
+      <div className="flex flex-1 overflow-hidden gap-0 flex-col lg:flex-row">
+        {/* Left: agent feed - hidden on mobile, full width on tablet/desktop */}
+        <div className="hidden lg:block w-full lg:w-1/2 p-3 sm:p-4 overflow-hidden border-b lg:border-b-0 lg:border-r border-sentinel-border">
           <AgentFeed logs={logs} isRunning={isRunning} />
         </div>
 
         {/* Right: findings */}
-        <div className="w-[45%] flex flex-col border-l border-sentinel-border overflow-hidden">
+        <div className="flex flex-col w-full lg:w-1/2 overflow-hidden">
 
-          {/* Stats bar */}
-          <div className="shrink-0 flex gap-0 border-b border-sentinel-border">
+          {/* Stats bar - responsive grid */}
+          <div className="shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-0 border-b border-sentinel-border">
             {SEV_ORDER.map((sev) => (
-              <div key={sev} className="flex-1 text-center py-3 border-r border-sentinel-border last:border-r-0">
-                <div className={`text-xl font-bold font-mono ${SEV_COLORS[sev]}`}>
+              <div key={sev} className="text-center py-2 sm:py-3 border-r border-sentinel-border last:border-r-0">
+                <div className={`text-lg sm:text-xl font-bold font-mono ${SEV_COLORS[sev]}`}>
                   {sevCounts[sev] ?? (report ? "0" : "—")}
                 </div>
                 <div className="text-xs text-sentinel-muted mt-0.5">{sev}</div>
@@ -137,7 +137,7 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
 
           {/* Summary */}
           {report?.summary && (
-            <div className="shrink-0 p-4 border-b border-sentinel-border bg-sentinel-surface/50 space-y-2">
+            <div className="shrink-0 p-3 sm:p-4 border-b border-sentinel-border bg-sentinel-surface/50 space-y-2">
               <p className="text-sm text-slate-300 leading-relaxed">{report.summary.executive_summary}</p>
               {report.summary.key_recommendations?.length > 0 && (
                 <ul className="space-y-1">
@@ -161,7 +161,7 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
           )}
 
           {/* Vuln list */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
             {!report && isRunning && (
               <div className="space-y-3">
                 {[...Array(3)].map((_, i) => (
@@ -190,6 +190,19 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
               </div>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Mobile-only agent feed footer */}
+      <div className="lg:hidden shrink-0 border-t border-sentinel-border bg-sentinel-surface p-3 max-h-48">
+        <div className="flex items-center gap-2 mb-2 text-xs font-mono text-slate-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-sentinel-green animate-pulse" />
+          Agent Feed ({logs.length} lines)
+        </div>
+        <div className="overflow-y-auto max-h-40 text-xs font-mono text-slate-300 space-y-0.5 pr-2">
+          {logs.slice(-5).map((log, i) => (
+            <div key={i} className="text-sentinel-muted">{log}</div>
+          ))}
         </div>
       </div>
     </div>

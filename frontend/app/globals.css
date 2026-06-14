@@ -97,131 +97,58 @@ body {
          transition-all duration-300 ease-out
          hover:bg-white/10 hover:border-white/20 hover:shadow-2xl
          hover:shadow-cyan-500/10;
-  
-  /* Subtle glow effect */
-  box-shadow: 
-    0 8px 32px rgba(0, 0, 0, 0.1),
-    inset 0 1px 1px rgba(255, 255, 255, 0.1),
-    0 0 1px rgba(0, 212, 255, 0.1);
 }
 
-.glass-card:hover {
-  box-shadow: 
-    0 20px 48px rgba(0, 212, 255, 0.15),
-    inset 0 1px 1px rgba(255, 255, 255, 0.15),
-    0 0 2px rgba(0, 212, 255, 0.2);
-}
-
-/* Premium input */
+/* Input styling */
 .input-glass {
-  @apply w-full px-4 py-3 bg-white/5 backdrop-blur-sm border border-white/10 
-         rounded-xl text-sm placeholder:text-slate-500
-         focus:outline-none focus:bg-white/10 focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-400/10
-         transition-all duration-300;
+  @apply bg-white/5 border border-white/10 rounded-lg px-4 py-2.5 text-sm
+         text-white placeholder-slate-500 transition-all duration-300
+         focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500/50
+         focus:bg-white/10 focus:shadow-lg focus:shadow-cyan-500/20;
 }
 
-.input-glass::placeholder {
-  color: rgba(148, 163, 184, 0.6);
+/* Button base styles */
+.btn-base {
+  @apply font-medium rounded-lg transition-all duration-300 ease-out
+         focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-950;
 }
 
-/* Premium button */
-.btn-glass {
-  @apply relative px-6 py-3 rounded-xl font-medium text-sm
-         bg-gradient-to-r from-cyan-500/20 to-purple-500/20
-         border border-cyan-400/30 text-white
-         hover:from-cyan-500/40 hover:to-purple-500/40 hover:border-cyan-400/60
-         focus:outline-none focus:ring-2 focus:ring-cyan-400/50
-         transition-all duration-300
-         disabled:opacity-50 disabled:cursor-not-allowed;
-  
-  overflow: hidden;
-}
-
-.btn-glass::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
-  transition: left 0.5s;
-}
-
-.btn-glass:hover::before {
-  left: 100%;
-}
-
-/* Premium button variant - solid */
 .btn-primary {
-  @apply px-6 py-3 rounded-xl font-medium text-sm
-         bg-gradient-to-r from-cyan-500 to-blue-500
-         text-white font-semibold
-         hover:shadow-lg hover:shadow-cyan-500/50
-         focus:outline-none focus:ring-2 focus:ring-cyan-400/50
-         transition-all duration-300
-         disabled:opacity-50 disabled:cursor-not-allowed;
+  @apply btn-base px-5 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-500
+         text-white font-semibold shadow-lg shadow-cyan-500/30
+         hover:shadow-xl hover:shadow-cyan-500/50 hover:scale-105
+         disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100;
 }
 
 .btn-secondary {
-  @apply px-6 py-3 rounded-xl font-medium text-sm
-         bg-white/10 border border-white/20
-         text-white
-         hover:bg-white/20 hover:border-white/30
-         focus:outline-none focus:ring-2 focus:ring-white/30
-         transition-all duration-300
+  @apply btn-base px-5 py-2.5 bg-white/10 border border-white/20
+         text-slate-200 hover:bg-white/20 hover:border-white/30
          disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
-/* Premium badge */
-.badge-gradient {
-  @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg
-         bg-gradient-to-r from-cyan-500/20 to-purple-500/20
-         border border-cyan-400/20
-         text-xs font-semibold text-cyan-300;
+/* Loading skeleton */
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
 }
 
-/* Animated gradient text */
-.gradient-text {
-  background: linear-gradient(90deg, #00d4ff, #a855f7, #00ff88);
-  background-size: 200% auto;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  animation: gradientShift 6s ease-in-out infinite;
+.skeleton {
+  @apply bg-gradient-to-r from-white/5 via-white/10 to-white/5;
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite;
 }
 
-/* Glow effect */
-.glow-cyan {
-  filter: drop-shadow(0 0 8px rgba(0, 212, 255, 0.5));
+.skeleton-text {
+  @apply skeleton rounded h-4 w-full;
 }
 
-.glow-purple {
-  filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.5));
-}
-
-.glow-green {
-  filter: drop-shadow(0 0 8px rgba(0, 255, 136, 0.5));
-}
-
-/* Separator line with glow */
-.separator-glow {
-  @apply h-px bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent;
-}
-
-/* Code block styling */
-code, pre {
-  font-family: 'JetBrains Mono', monospace;
-}
-
-pre {
-  @apply bg-black/30 border border-white/10 rounded-lg p-4 overflow-x-auto;
-  background: linear-gradient(135deg, rgba(0, 0, 0, 0.3) 0%, rgba(0, 20, 40, 0.3) 100%);
+.skeleton-card {
+  @apply skeleton rounded-xl p-4 space-y-3;
 }
 
 /* Scrollable area */
 .scrollable-area {
-  @apply overflow-y-auto;
+  @apply scroll-smooth;
 }
 
 .scrollable-area::-webkit-scrollbar {
@@ -229,16 +156,16 @@ pre {
 }
 
 .scrollable-area::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(17, 17, 24, 0.5);
 }
 
 .scrollable-area::-webkit-scrollbar-thumb {
-  background: rgba(0, 212, 255, 0.2);
+  background: rgba(0, 212, 255, 0.3);
   border-radius: 3px;
 }
 
 .scrollable-area::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 212, 255, 0.4);
+  background: rgba(0, 212, 255, 0.5);
 }
 
 /* Responsive utility */
