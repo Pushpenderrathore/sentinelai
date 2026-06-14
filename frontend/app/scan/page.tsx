@@ -82,6 +82,11 @@ export default function ScanPage() {
         <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl opacity-20" />
       </div>
 
+      {/* Scan history link */}
+      <Link href="/history" className="absolute top-6 right-6 z-10 text-xs font-mono text-slate-400 hover:text-cyan-400 border border-white/10 hover:border-cyan-400/40 rounded-lg px-3 py-1.5 transition-colors">
+        Scan History
+      </Link>
+
       <div className="relative z-10 max-w-2xl mx-auto">
         {/* Header */}
         <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-mono text-slate-400 hover:text-cyan-400 mb-8 transition-colors">

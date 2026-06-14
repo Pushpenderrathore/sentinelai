@@ -54,6 +54,14 @@ export default function InvigilatorMonitor({ params }: { params: { id: string } 
         })
       }
 
+      // Authoritative trust score from the student client (overrides the
+      // alert-based estimate below).
+      if (msg.type === "trust_update") {
+        const s = msg.score as number
+        setScore(s)
+        setVerdict(s >= 80 ? "CLEAN" : s >= 60 ? "SUSPICIOUS" : "FLAGGED")
+      }
+
       if (msg.type === "exam_ended") {
         handleTriggerAnalysis()
       }
@@ -90,8 +98,9 @@ export default function InvigilatorMonitor({ params }: { params: { id: string } 
   }
 
   // ── Live clock ─────────────────────────────────────────────
-  const [time, setTime] = useState(new Date().toLocaleTimeString("en-IN", { hour12: false }))
+  const [time, setTime] = useState("")   // empty on server → no hydration mismatch
   useEffect(() => {
+    setTime(new Date().toLocaleTimeString("en-IN", { hour12: false }))
     const t = setInterval(() => setTime(new Date().toLocaleTimeString("en-IN", { hour12: false })), 1000)
     return () => clearInterval(t)
   }, [])

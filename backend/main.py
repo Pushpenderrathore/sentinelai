@@ -34,12 +34,14 @@ ExamGuard analysis socket (/ws/exam/{id}/analysis):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Dict
+from pathlib import Path
+from typing import Dict, List
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -64,6 +66,64 @@ from exam_agents.event_rules import (
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 logger = logging.getLogger("sentinelai")
 
+# ── Scan history persistence ──────────────────────────────────
+_HISTORY_FILE = Path(os.getenv("HISTORY_FILE", "scan_history.json"))
+_history_lock = asyncio.Lock()
+
+
+def _load_history() -> list[dict]:
+    if not _HISTORY_FILE.exists():
+        return []
+    try:
+        return json.loads(_HISTORY_FILE.read_text())
+    except Exception:
+        return []
+
+
+async def _save_history(records: list[dict]) -> None:
+    async with _history_lock:
+        _HISTORY_FILE.write_text(json.dumps(records, indent=2))
+
+
+async def _append_scan_history(scan_id: str, repo_url: str, report: dict, started_at: float) -> None:
+    """Persist a completed scan to scan_history.json. Called only on success."""
+    from urllib.parse import urlparse
+    vulns: list[dict] = report.get("vulnerabilities", [])
+    sev: dict[str, int] = {}
+    for v in vulns:
+        s = v.get("severity", "UNKNOWN")
+        sev[s] = sev.get(s, 0) + 1
+
+    try:
+        parsed = urlparse(repo_url if "://" in repo_url else f"https://{repo_url}")
+        domain = parsed.netloc or parsed.path.split("/")[0]
+    except Exception:
+        domain = repo_url
+
+    record = {
+        "scan_id":         scan_id,
+        "domain":          domain,
+        "repo_url":        repo_url,
+        "scan_date":       time.strftime("%Y-%m-%d", time.gmtime(started_at)),
+        "timestamp":       started_at,
+        "total_vulns":     len(vulns),
+        "severity":        {"critical": sev.get("CRITICAL", 0), "high": sev.get("HIGH", 0),
+                            "medium": sev.get("MEDIUM", 0), "low": sev.get("LOW", 0)},
+        "risk_score":      report.get("summary", {}).get("risk_score", 0),
+        "overall_risk":    report.get("summary", {}).get("overall_risk", "UNKNOWN"),
+        "vulnerabilities": vulns,
+        "patches":         report.get("patches", []),
+        "summary":         report.get("summary", {}),
+    }
+
+    async with _history_lock:
+        records = _load_history()
+        # Never overwrite — each scan is a new entry; only deduplicate same scan_id
+        records = [r for r in records if r.get("scan_id") != scan_id]
+        records.insert(0, record)
+        _HISTORY_FILE.write_text(json.dumps(records, indent=2))
+    logger.info("Scan %s (%s) saved to history (%d total)", scan_id, domain, len(records) + 1)
+
 # ── Operational limits (overridable via environment) ──────────
 MAX_CONCURRENT_SCANS   = int(os.getenv("MAX_CONCURRENT_SCANS", "3"))
 SCAN_TIMEOUT_SECS      = float(os.getenv("SCAN_TIMEOUT_SECS", "600"))
@@ -78,6 +138,18 @@ MAX_EVENTS_PER_LIST    = int(os.getenv("MAX_EVENTS_PER_LIST", "5000"))
 # ── In-process registries ─────────────────────────────────────
 _scans: Dict[str, dict] = {}           # VulnSentinel scan sessions
 _exam_sessions: Dict[str, dict] = {}   # ExamGuard sessions
+
+# Global multi-student monitor: fan-out queues for the class-wide host
+# dashboard, plus the latest trust snapshot per exam (so a dashboard that
+# connects mid-exam immediately sees every active student).
+_global_monitor_queues: List[asyncio.Queue] = []
+_latest_trust: Dict[str, dict] = {}    # exam_id → last trust_update payload
+
+
+async def _broadcast_global(msg: dict) -> None:
+    """Push a message to every connected class-wide dashboard."""
+    for q in list(_global_monitor_queues):
+        await q.put(msg)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -194,6 +266,9 @@ async def _run_scan(repo_url: str, scan_id: str) -> None:
 
         await queue.put({"type": "done", "scan_id": scan_id, "report": report})
 
+        # Persist to history only on successful completion
+        await _append_scan_history(scan_id, repo_url, report, _scans[scan_id]["started_at"])
+
     except TimeoutError:
         logger.error("Scan %s exceeded %ss timeout", scan_id, SCAN_TIMEOUT_SECS)
         _scans[scan_id]["status"] = "error"
@@ -266,6 +341,112 @@ async def list_scans() -> list[ScanSummary]:
         )
         for sid, data in sorted(_scans.items(), key=lambda x: x[1]["started_at"], reverse=True)
     ]
+
+
+@app.get("/api/scans/history")
+async def list_scan_history() -> list[dict]:
+    """Return all completed scans from history, newest first."""
+    return _load_history()
+
+
+@app.get("/api/scans/history/domains")
+async def list_history_domains() -> list[dict]:
+    """Return one summary entry per unique domain, newest scan first."""
+    records = _load_history()
+    seen: dict[str, dict] = {}
+    for r in records:                          # records are newest-first
+        d = r.get("domain", r.get("repo_url", ""))
+        if d not in seen:
+            seen[d] = {
+                "domain":       d,
+                "latest_scan":  r,
+                "scan_count":   0,
+                "scans":        [],
+            }
+        seen[d]["scan_count"] += 1
+        seen[d]["scans"].append({
+            "scan_id":    r["scan_id"],
+            "timestamp":  r["timestamp"],
+            "scan_date":  r["scan_date"],
+            "risk_score": r["risk_score"],
+            "overall_risk": r["overall_risk"],
+            "total_vulns":  r["total_vulns"],
+            "severity":     r["severity"],
+        })
+    return list(seen.values())
+
+
+@app.get("/api/scans/history/domain/{domain:path}")
+async def get_domain_history(domain: str) -> list[dict]:
+    """Return all scans for one domain, newest first (full records)."""
+    records = _load_history()
+    result = [r for r in records if r.get("domain", "") == domain]
+    if not result:
+        raise HTTPException(status_code=404, detail="No scans found for this domain")
+    return result
+
+
+@app.get("/api/scans/history/compare/{scan_a}/{scan_b}")
+async def compare_scans(scan_a: str, scan_b: str) -> dict:
+    """Compare two scans (scan_a = older, scan_b = newer)."""
+    records = _load_history()
+    by_id = {r["scan_id"]: r for r in records}
+    a = by_id.get(scan_a)
+    b = by_id.get(scan_b)
+    if not a or not b:
+        raise HTTPException(status_code=404, detail="One or both scans not found")
+
+    ids_a = {v["id"] for v in a.get("vulnerabilities", []) if "id" in v}
+    ids_b = {v["id"] for v in b.get("vulnerabilities", []) if "id" in v}
+
+    # Fallback: match by (file, line, category) if IDs differ across scans
+    def _key(v: dict) -> str:
+        return f"{v.get('file','')}:{v.get('line','')}:{v.get('category','')}"
+    keys_a = {_key(v) for v in a.get("vulnerabilities", [])}
+    keys_b = {_key(v) for v in b.get("vulnerabilities", [])}
+
+    fixed_ids   = ids_a - ids_b
+    new_ids     = ids_b - ids_a
+    fixed_keys  = keys_a - keys_b
+    new_keys    = keys_b - keys_a
+
+    score_delta = b["risk_score"] - a["risk_score"]
+    vuln_delta  = b["total_vulns"] - a["total_vulns"]
+
+    return {
+        "scan_a":        {"scan_id": scan_a, "timestamp": a["timestamp"], "scan_date": a["scan_date"],
+                          "risk_score": a["risk_score"], "overall_risk": a["overall_risk"],
+                          "total_vulns": a["total_vulns"], "severity": a["severity"]},
+        "scan_b":        {"scan_id": scan_b, "timestamp": b["timestamp"], "scan_date": b["scan_date"],
+                          "risk_score": b["risk_score"], "overall_risk": b["overall_risk"],
+                          "total_vulns": b["total_vulns"], "severity": b["severity"]},
+        "score_delta":   score_delta,          # negative = improvement
+        "vuln_delta":    vuln_delta,
+        "fixed_count":   len(fixed_keys),
+        "new_count":     len(new_keys),
+        "fixed_vulns":   [v for v in a.get("vulnerabilities", []) if _key(v) in fixed_keys],
+        "new_vulns":     [v for v in b.get("vulnerabilities", []) if _key(v) in new_keys],
+    }
+
+
+@app.get("/api/scans/history/{scan_id}")
+async def get_scan_history(scan_id: str) -> dict:
+    """Return full details of one historical scan."""
+    for record in _load_history():
+        if record.get("scan_id") == scan_id:
+            return record
+    raise HTTPException(status_code=404, detail="Scan not found in history")
+
+
+@app.delete("/api/scans/history/{scan_id}", status_code=204)
+async def delete_scan_history(scan_id: str) -> None:
+    """Remove one scan from history."""
+    async with _history_lock:
+        records = _load_history()
+        filtered = [r for r in records if r.get("scan_id") != scan_id]
+        if len(filtered) == len(records):
+            raise HTTPException(status_code=404, detail="Scan not found in history")
+        _HISTORY_FILE.write_text(json.dumps(filtered, indent=2))
 
 
 @app.get("/health")
@@ -645,6 +826,29 @@ async def ws_exam_events(websocket: WebSocket, exam_id: str) -> None:
                     session["immediate_alerts"].append(alert)
                     await _fan_out(entry, alert)
 
+            # ── Trust score update (client-computed, browser-side) ──
+            elif event_type == "trust_update":
+                # Persist the latest snapshot and fan out to both the
+                # per-exam monitor and the class-wide dashboard.
+                payload = {
+                    "type":         "trust_update",
+                    "exam_id":      exam_id,
+                    "student_id":   data.get("student_id", exam_id),
+                    "student_name": data.get("student_name") or session["student_name"],
+                    "exam_name":    data.get("exam_name") or session["exam_name"],
+                    "score":        data.get("score", 100),
+                    "status":       data.get("status", "clean"),
+                    "counts":       data.get("counts", {}),
+                    "flagged":      data.get("flagged", False),
+                    "terminated":   data.get("terminated", False),
+                    "recent":       data.get("recent", []),
+                    "timestamp":    data.get("timestamp", time.time()),
+                }
+                session["integrity_score"] = payload["score"]
+                _latest_trust[exam_id] = payload
+                await _fan_out(entry, payload)
+                await _broadcast_global(payload)
+
             # ── End exam ─────────────────────────────────────
             elif event_type == "end_exam":
                 session["status"]   = "ended"
@@ -656,6 +860,7 @@ async def ws_exam_events(websocket: WebSocket, exam_id: str) -> None:
                 }
                 await websocket.send_json(ended_msg)
                 await _fan_out(entry, ended_msg)
+                await _broadcast_global({**ended_msg, "student_id": exam_id})
                 break
 
             # ── Keepalive ────────────────────────────────────
@@ -715,6 +920,51 @@ async def ws_exam_monitor(websocket: WebSocket, exam_id: str) -> None:
     finally:
         if q in entry["monitor_queues"]:
             entry["monitor_queues"].remove(q)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+# ══════════════════════════════════════════════════════════════
+#  ExamGuard — class-wide monitor WebSocket
+#  One-directional: streams trust_update + exam_ended for EVERY
+#  active session to the host's multi-student dashboard.
+# ══════════════════════════════════════════════════════════════
+
+@app.websocket("/ws/exam/monitor/all")
+async def ws_exam_monitor_all(websocket: WebSocket) -> None:
+    await websocket.accept()
+    q: asyncio.Queue = asyncio.Queue()
+    _global_monitor_queues.append(q)
+    logger.info("Class-wide monitor WS connected (%d total)", len(_global_monitor_queues))
+
+    # Replay the latest snapshot for every student so a dashboard that joins
+    # mid-exam is immediately populated.
+    try:
+        for snapshot in list(_latest_trust.values()):
+            await websocket.send_json(snapshot)
+    except Exception:
+        pass
+
+    try:
+        while True:
+            try:
+                msg = await asyncio.wait_for(q.get(), timeout=PING_INTERVAL)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "ping"})
+                continue
+            if msg is None:
+                break
+            await websocket.send_json(msg)
+
+    except WebSocketDisconnect:
+        logger.info("Class-wide monitor WS disconnected")
+    except Exception as exc:
+        logger.error("Class-wide monitor WS error: %s", exc)
+    finally:
+        if q in _global_monitor_queues:
+            _global_monitor_queues.remove(q)
         try:
             await websocket.close()
         except Exception:

@@ -2,9 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import FaceMonitor from "@/components/examguard/FaceMonitor"
+import WarningToast from "@/components/examguard/WarningToast"
 import { useWebSocket } from "@/lib/ws"
 import { getExamSession } from "@/lib/api"
 import { QUESTION_BANK, type MCQ, type SubjectBank } from "@/lib/questionBank"
+import { useTrustScore } from "@/lib/useTrustScore"
+import {
+  statusFromScore,
+  DEDUCTIONS,
+  VIOLATION_LABELS,
+  WARN_THRESHOLD,
+  TERMINATE_THRESHOLD,
+  type TrustState,
+  type ViolationType,
+} from "@/lib/trustScore"
 
 const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000"
 
@@ -59,19 +70,87 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
   const [tabCount,    setTabCount]    = useState(0)
   const [submitted,   setSubmitted]   = useState(false)
   const [terminated,  setTerminated]  = useState(false)
+  const [termReason,  setTermReason]  = useState<string>("")
+  const [studentName, setStudentName] = useState<string>("")
+  const [examName,    setExamName]    = useState<string>("")
+
+  // ── Trust score (client-side; synced to backend via WS) ──────
+  const { state: trust, registerViolation } = useTrustScore()
+  const [warnKey, setWarnKey]   = useState(0)   // bump to fire the student toast
+  const warnedBelow60 = useRef(false)
+
+  // ── Debug panel (manual violation triggers; enable with ?debug=1) ──
+  const [showDebug, setShowDebug] = useState(false)
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search)
+    setShowDebug(p.get("debug") === "1")
+  }, [])
 
   const TAB_LIMIT = 5
 
   useEffect(() => {
-    getExamSession(examId).then((s) => setTimeLeft(s.duration_minutes * 60)).catch(() => {})
+    getExamSession(examId)
+      .then((s) => {
+        setTimeLeft(s.duration_minutes * 60)
+        setStudentName(s.student_name)
+        setExamName(s.exam_name)
+      })
+      .catch(() => {})
   }, [examId])
 
   useEffect(() => {
     if (tabCount >= TAB_LIMIT && !submitted && !terminated) {
       send({ type: "end_exam", timestamp: Date.now() / 1000 })
+      setTermReason(`repeated tab switching (${TAB_LIMIT}+ times)`)
       setTerminated(true)
     }
   }, [tabCount, submitted, terminated, send])
+
+  // ── Sync trust state to backend (fans out to host dashboard) ──
+  const emitTrust = useCallback(
+    (t: TrustState, isTerminated: boolean) => {
+      send({
+        type:         "trust_update",
+        student_id:   examId,
+        student_name: studentName,
+        exam_name:    examName,
+        score:        t.score,
+        status:       statusFromScore(t.score, isTerminated),
+        counts:       t.counts,
+        flagged:      t.flagged,
+        terminated:   isTerminated,
+        recent:       t.events.slice(-5).map((e) => ({ type: e.type, label: e.label, ts: e.ts })),
+        timestamp:    Date.now() / 1000,
+      })
+    },
+    [send, examId, studentName, examName],
+  )
+
+  useEffect(() => {
+    if (status !== "open" || submitted) return
+    emitTrust(trust, terminated)
+  }, [trust, terminated, submitted, status, emitTrust])
+
+  // ── Auto-actions driven by trust score ───────────────────────
+  useEffect(() => {
+    if (submitted || terminated) return
+
+    // < 20 → auto-terminate the exam for this student
+    if (trust.score < TERMINATE_THRESHOLD) {
+      send({ type: "end_exam", timestamp: Date.now() / 1000 })
+      setTermReason(`trust score dropped below ${TERMINATE_THRESHOLD}`)
+      setTerminated(true)
+      return
+    }
+
+    // < 60 → one-time warning toast to the student
+    if (trust.score < WARN_THRESHOLD && !warnedBelow60.current) {
+      warnedBelow60.current = true
+      setWarnKey((k) => k + 1)
+    }
+    // Re-arm the warning once they recover back above the threshold
+    if (trust.score >= WARN_THRESHOLD) warnedBelow60.current = false
+  }, [trust.score, submitted, terminated, send])
 
   useEffect(() => {
     if (submitted || terminated) return
@@ -92,18 +171,31 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
     function onVisibilityChange() {
       const ts = Date.now() / 1000
       send({ type: "tab_event", event_type: document.hidden ? "hidden" : "visible", timestamp: ts })
-      if (document.hidden) setTabCount((c) => c + 1)
+      if (document.hidden) {
+        setTabCount((c) => c + 1)
+        registerViolation("tab_switch", ts)
+      }
     }
     function onBlur() {
-      send({ type: "tab_event", event_type: "blur", timestamp: Date.now() / 1000 })
+      const ts = Date.now() / 1000
+      send({ type: "tab_event", event_type: "blur", timestamp: ts })
+      registerViolation("window_blur", ts)
+    }
+    function onPaste(e: ClipboardEvent) {
+      const ts = Date.now() / 1000
+      const len = e.clipboardData?.getData("text")?.length ?? 0
+      send({ type: "copy_paste", content_length: len, timestamp: ts })
+      registerViolation("copy_paste", ts)
     }
     document.addEventListener("visibilitychange", onVisibilityChange)
     window.addEventListener("blur", onBlur)
+    document.addEventListener("paste", onPaste)
     return () => {
       document.removeEventListener("visibilitychange", onVisibilityChange)
       window.removeEventListener("blur", onBlur)
+      document.removeEventListener("paste", onPaste)
     }
-  }, [selectedSubject, status, submitted, terminated, send])
+  }, [selectedSubject, status, submitted, terminated, send, registerViolation])
 
   const lastKeystroke  = useRef<number>(Date.now())
   const keystrokeCount = useRef(0)
@@ -126,17 +218,37 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
     }
   }
 
+  // Debounce continuous conditions so the score isn't drained every 3s tick:
+  // only count a NEW violation when the face state transitions into a bad state.
+  const prevFaceCount = useRef(1)
+  const lastPhoneViolation = useRef(0)
+  const PHONE_COOLDOWN_S = 8
+
   const onFaceEvent = useCallback(
     (faceCount: number, confidence: number) => {
-      if (status === "open") send({ type: "face_event", face_count: faceCount, confidence, timestamp: Date.now() / 1000 })
+      if (status !== "open") return
+      const ts = Date.now() / 1000
+      send({ type: "face_event", face_count: faceCount, confidence, timestamp: ts })
+
+      const prev = prevFaceCount.current
+      if (faceCount === 0 && prev !== 0) registerViolation("face_missing", ts)
+      else if (faceCount >= 2 && prev < 2) registerViolation("multiple_faces", ts)
+      prevFaceCount.current = faceCount
     },
-    [status, send],
+    [status, send, registerViolation],
   )
   const onPhoneEvent = useCallback(
     (confidence: number) => {
-      if (status === "open") send({ type: "phone_detected", confidence, timestamp: Date.now() / 1000 })
+      if (status !== "open") return
+      const ts = Date.now() / 1000
+      send({ type: "phone_detected", confidence, timestamp: ts })
+      // coco-ssd can fire repeatedly for one phone; throttle trust deductions.
+      if (ts - lastPhoneViolation.current >= PHONE_COOLDOWN_S) {
+        lastPhoneViolation.current = ts
+        registerViolation("phone", ts)
+      }
     },
-    [status, send],
+    [status, send, registerViolation],
   )
 
   function handleSelectSubject(sub: SubjectBank) {
@@ -162,11 +274,13 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
         </div>
         <h2 className="text-2xl font-bold text-red-600 mb-2">Exam Terminated</h2>
         <p className="text-slate-600 text-sm max-w-sm leading-relaxed">
-          Your exam was automatically terminated due to <strong>repeated tab switching ({TAB_LIMIT}+ times)</strong>.
+          Your exam was automatically terminated due to{" "}
+          <strong>{termReason || `repeated tab switching (${TAB_LIMIT}+ times)`}</strong>.
           This session has been flagged.
         </p>
         <div className="mt-5 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 max-w-sm">
-          Tab switches: <strong>{tabCount}</strong> — limit is {TAB_LIMIT}
+          Final trust score: <strong>{trust.score}/100</strong>
+          {tabCount > 0 && <> · Tab switches: <strong>{tabCount}</strong></>}
         </div>
         <p className="mt-5 text-xs font-mono text-slate-400">Session: {examId}</p>
       </div>
@@ -307,6 +421,15 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
 
         <span className="text-xs text-slate-500 font-mono">{answered}/{questions.length} answered</span>
 
+        {/* Live trust score */}
+        <div className={`flex items-center gap-1.5 text-xs font-mono rounded-full px-3 py-1 border
+                        ${trust.score >= 80 ? "text-emerald-600 bg-emerald-50 border-emerald-200"
+                          : trust.score >= WARN_THRESHOLD ? "text-amber-600 bg-amber-50 border-amber-200"
+                          : "text-red-600 bg-red-50 border-red-300"}`}>
+          <span className="font-semibold">{trust.score}</span>
+          <span className="opacity-60">trust</span>
+        </div>
+
         <div className="flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
           Monitored
@@ -399,6 +522,13 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
         </div>
       </main>
 
+      {/* Trust-score warning toast (fires when score drops below 60) */}
+      <WarningToast
+        triggerKey={warnKey}
+        message="You have been flagged, please follow exam rules."
+        tone={trust.score < TERMINATE_THRESHOLD + 15 ? "critical" : "warning"}
+      />
+
       {/* Tab switch warning */}
       {tabCount > 0 && (
         <div className={`fixed bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2
@@ -409,6 +539,40 @@ export default function StudentExamPage({ params }: { params: { id: string } }) 
           {tabCount >= TAB_LIMIT - 1
             ? `WARNING: ${tabCount}/${TAB_LIMIT} tab switches — one more will terminate your exam!`
             : `Tab switching detected (${tabCount}×) — this session is being monitored.`}
+        </div>
+      )}
+
+      {/* ── Debug panel: manually fire violations (enable with ?debug=1) ── */}
+      {showDebug && (
+        <div className="fixed bottom-4 right-4 z-50 w-60 rounded-xl border border-slate-300 bg-white/95
+                        backdrop-blur shadow-xl p-3 text-slate-700">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              Debug · Trust
+            </span>
+            <span className={`text-xs font-mono font-bold ${
+              trust.score >= 80 ? "text-emerald-600"
+                : trust.score >= WARN_THRESHOLD ? "text-amber-600" : "text-red-600"
+            }`}>
+              {trust.score}/100
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-1.5">
+            {(Object.keys(DEDUCTIONS) as ViolationType[]).map((type) => (
+              <button
+                key={type}
+                onClick={() => registerViolation(type, Date.now() / 1000)}
+                className="flex items-center justify-between text-left text-xs px-2.5 py-1.5 rounded-lg
+                           border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors"
+              >
+                <span>{VIOLATION_LABELS[type]}</span>
+                <span className="font-mono font-semibold text-red-500">−{DEDUCTIONS[type]}</span>
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] text-slate-400 leading-snug">
+            Fires a real violation → WS sync → host dashboard. Recovers +1 / 30s when idle.
+          </p>
         </div>
       )}
     </div>

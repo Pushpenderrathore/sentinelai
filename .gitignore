@@ -16,6 +16,8 @@ frontend/.next/
 frontend/out/
 frontend/.env.local
 frontend/.env.production
+frontend/tsconfig.tsbuildinfo
+tsconfig.tsbuildinfo
 
 # Repos cloned during scans
 /tmp/vulnsentinel_*/
@@ -32,3 +34,6 @@ Thumbs.db
 # Auto-downloaded model weights
 backend/yolov8n.pt
 *.pt
+
+# Runtime scan history (generated at runtime)
+backend/scan_history.json
