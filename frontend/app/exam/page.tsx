@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { createExamSession } from "@/lib/api"
+import Link from "next/link"
 
 export default function ExamPage() {
   const router = useRouter()
@@ -35,102 +36,192 @@ export default function ExamPage() {
   }
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center px-6">
-      <a href="/" className="absolute top-6 left-6 text-sentinel-muted hover:text-white text-sm flex items-center gap-1.5 transition-colors">
-        ← Home
-      </a>
+    <main className="min-h-screen px-4 sm:px-6 py-8 sm:py-12 relative overflow-hidden">
+      {/* Background decoration */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl opacity-20" />
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-pink-500/10 rounded-full blur-3xl opacity-20" />
+      </div>
 
-      <div className="w-full max-w-md">
-        <div className="mb-10 text-center">
-          <div className="inline-block text-sentinel-purple mb-4">
-            <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"/>
-            </svg>
+      <div className="relative z-10 max-w-2xl mx-auto">
+        {/* Header */}
+        <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-mono text-slate-400 hover:text-purple-400 mb-8 transition-colors">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to home
+        </Link>
+
+        <div className="mb-12">
+          <div className="flex items-center gap-4 mb-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-purple-500/30 flex items-center justify-center">
+              <svg className="w-6 h-6 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"/>
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-bold text-white mb-1">ExamGuard</h1>
+              <p className="text-sm text-slate-400">AI-powered proctoring with real-time integrity monitoring</p>
+            </div>
           </div>
-          <h1 className="text-2xl font-bold mb-2">ExamGuard</h1>
-          <p className="text-sentinel-muted text-sm">Create a monitored exam session.</p>
+          <p className="text-slate-400 max-w-lg">
+            Create a secure, monitored exam session. Face detection, keystroke analysis, and tab monitoring ensure academic integrity. Perfect for remote assessments and online proctoring.
+          </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {[
-            { key: "student_name", label: "Student Name", placeholder: "Riya Sharma",       type: "text" },
-            { key: "student_id",   label: "Student ID",   placeholder: "STU-2024-001",      type: "text" },
-            { key: "college_id",   label: "College ID",   placeholder: "CLG-AKGEC-2024",    type: "text" },
-          ].map(({ key, label, placeholder, type }) => (
-            <div key={key}>
-              <label className="block text-xs text-sentinel-muted mb-1.5">{label}</label>
-              <input
-                type={type}
-                value={(form as Record<string, string | number>)[key] as string}
-                onChange={(e) => set(key, e.target.value)}
-                placeholder={placeholder}
-                required
-                className="w-full px-4 py-3 bg-sentinel-surface border border-sentinel-border rounded-xl
-                           text-sm placeholder:text-sentinel-muted
-                           focus:outline-none focus:border-sentinel-purple/50 focus:ring-1 focus:ring-sentinel-purple/20
-                           transition-colors"
-              />
-            </div>
-          ))}
-
+        {/* Main form card */}
+        <form onSubmit={handleSubmit} className="glass-card p-6 sm:p-8 mb-8 space-y-6">
+          {/* Student Information Section */}
           <div>
-            <label className="block text-xs text-sentinel-muted mb-1.5">
-              Duration — <span className="text-slate-300">{form.duration_minutes} minutes</span>
-            </label>
-            <input
-              type="range"
-              min={15} max={180} step={15}
-              value={form.duration_minutes}
-              onChange={(e) => set("duration_minutes", parseInt(e.target.value))}
-              className="w-full accent-sentinel-purple"
-            />
-            <div className="flex justify-between text-xs text-sentinel-muted mt-1">
-              <span>15 min</span>
-              <span>180 min</span>
+            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 flex items-center justify-center text-xs">👤</span>
+              Student Information
+            </h3>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+              {[
+                { key: "student_name", label: "Student Name", placeholder: "e.g., Riya Sharma", type: "text" },
+                { key: "student_id",   label: "Student ID",   placeholder: "e.g., STU-2024-001", type: "text" },
+              ].map(({ key, label, placeholder, type }) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-slate-300 mb-2">{label}</label>
+                  <input
+                    type={type}
+                    value={(form as Record<string, string | number>)[key] as string}
+                    onChange={(e) => set(key, e.target.value)}
+                    placeholder={placeholder}
+                    required
+                    className="input-glass w-full"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-2">College ID</label>
+              <input
+                type="text"
+                value={form.college_id}
+                onChange={(e) => set("college_id", e.target.value)}
+                placeholder="e.g., CLG-AKGEC-2024"
+                required
+                className="input-glass w-full"
+              />
             </div>
           </div>
 
-          {error && <p className="text-sentinel-red text-sm">{error}</p>}
+          {/* Exam Settings Section */}
+          <div className="border-t border-white/10 pt-6">
+            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 flex items-center justify-center text-xs">⏱️</span>
+              Exam Settings
+            </h3>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3.5 rounded-xl font-medium text-sm
-                       bg-sentinel-purple text-white
-                       hover:bg-sentinel-purple/90 active:scale-[0.98]
-                       disabled:opacity-40 disabled:cursor-not-allowed
-                       transition-all duration-150"
-          >
-            {loading ? "Creating session…" : "Start Proctored Exam"}
-          </button>
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-xs font-medium text-slate-300">Duration</label>
+                <span className="text-sm font-bold text-purple-400">{form.duration_minutes} minutes</span>
+              </div>
+              <input
+                type="range"
+                min={15} max={180} step={15}
+                value={form.duration_minutes}
+                onChange={(e) => set("duration_minutes", parseInt(e.target.value))}
+                className="w-full accent-purple-500"
+              />
+              <div className="flex justify-between text-xs text-slate-500 mt-2">
+                <span>15 min</span>
+                <span>180 min</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Error message */}
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-start gap-2">
+              <span className="text-red-400 mt-0.5">✕</span>
+              <p className="text-sm text-red-300">{error}</p>
+            </div>
+          )}
+
+          {/* Submit button */}
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {loading ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  Creating session...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                  </svg>
+                  Start Proctored Exam
+                </>
+              )}
+            </button>
+          </div>
         </form>
 
-        {/* Quick-fill examples */}
-        <div className="mt-5">
-          <p className="text-xs text-sentinel-muted text-center mb-2">Quick fill example</p>
-          <div className="flex flex-wrap gap-2 justify-center">
+        {/* Features */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+          {[
+            { icon: "👁️", title: "Face Detection", desc: "Real-time face recognition ensures the registered student is present" },
+            { icon: "⌨️", title: "Keystroke Analysis", desc: "Detects suspicious typing patterns and unusual activity" },
+            { icon: "📱", title: "Tab Monitoring", desc: "Tracks window focus and detects tab switching attempts" },
+            { icon: "🎯", title: "Integrity Scoring", desc: "Comprehensive behavioral analysis with real-time risk assessment" },
+          ].map((feat, i) => (
+            <div key={i} className="glass-card p-4">
+              <div className="text-2xl mb-2">{feat.icon}</div>
+              <h4 className="text-sm font-semibold text-white mb-1">{feat.title}</h4>
+              <p className="text-xs text-slate-400">{feat.desc}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Quick examples */}
+        <div className="glass-card p-6">
+          <h3 className="text-sm font-bold text-white mb-4">Quick Fill Examples</h3>
+          <div className="space-y-2">
             {[
-              { label: "Riya Sharma",  student_name: "Riya Sharma",  student_id: "24-CSE-1042", college_id: "CLG-AKGEC-2024", duration_minutes: 60  },
-              { label: "Arjun Mehta", student_name: "Arjun Mehta", student_id: "24-CSE-2187", college_id: "CLG-AKGEC-2024", duration_minutes: 90  },
-              { label: "Priya Patel", student_name: "Priya Patel", student_id: "24-IT-3056",  college_id: "CLG-AKGEC-2024", duration_minutes: 120 },
-            ].map((ex) => (
+              { name: "Riya Sharma",  id: "24-CSE-1042", college: "CLG-AKGEC-2024", duration: 60 },
+              { name: "Arjun Mehta", id: "24-CSE-2187", college: "CLG-AKGEC-2024", duration: 90 },
+              { name: "Priya Patel", id: "24-IT-3056",  college: "CLG-AKGEC-2024", duration: 120 },
+            ].map((ex, i) => (
               <button
-                key={ex.label}
+                key={i}
                 type="button"
-                onClick={() => setForm({ student_name: ex.student_name, student_id: ex.student_id, college_id: ex.college_id, exam_name: "B.Tech Proctored Examination", duration_minutes: ex.duration_minutes })}
-                className="text-xs font-mono px-3 py-1.5 rounded-lg border border-sentinel-border
-                           text-sentinel-muted hover:text-white hover:border-slate-500 transition-colors"
+                onClick={() => setForm({ 
+                  student_name: ex.name, 
+                  student_id: ex.id, 
+                  college_id: ex.college, 
+                  exam_name: "B.Tech Proctored Examination", 
+                  duration_minutes: ex.duration 
+                })}
+                className="w-full text-left px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-slate-300
+                         hover:bg-white/10 hover:border-white/20 hover:text-white
+                         transition-all duration-300 text-sm font-mono"
               >
-                {ex.label}
+                <span className="font-semibold">{ex.name}</span> • ID: {ex.id} • {ex.duration} min
               </button>
             ))}
           </div>
         </div>
 
-        <p className="mt-5 text-xs text-center text-sentinel-muted">
-          Once created, share the exam link with the student. Open{" "}
-          <code className="text-slate-400">/exam/[id]/monitor</code> in a separate tab to watch live.
-        </p>
+        {/* Info */}
+        <div className="mt-8 p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
+          <p className="text-xs text-blue-300 leading-relaxed">
+            <strong>Pro Tip:</strong> Once created, share the exam link with the student. Open <code className="text-slate-300 font-mono">/exam/[id]/monitor</code> in a separate browser or second screen to watch the live proctoring feed.
+          </p>
+        </div>
       </div>
     </main>
   )
