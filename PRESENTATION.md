@@ -228,7 +228,7 @@ accessible to any developer and any institution.
 
 ```
 Agent Framework    LangGraph          (stateful multi-agent graphs)
-LLM                Claude claude-sonnet-4-6      (Anthropic API)
+LLM                Llama 3.3 70B      (Groq API · Ollama offline fallback)
 Backend            FastAPI + Python 3.11
 Static Analysis    Semgrep · Bandit
 Real-time          WebSocket (native browser API)
@@ -306,7 +306,7 @@ Next 6 months
 | Every demo slide has the app running live, not a screenshot | Rules say "fake demos" are disqualifying |
 | No bullet walls - use tables, diagrams, code blocks | Judges see 100+ decks; visual stands out |
 | Consistent font: bold display font for headlines, mono for code | Matches the terminal aesthetic of the product |
-| Include the Anthropic/LangGraph logos in the tech stack slide | Shows you're using real infrastructure |
+| Include the Groq/LangGraph logos in the tech stack slide | Shows you're using real infrastructure |
 
 ---
 
