@@ -14,7 +14,6 @@ const modules = [
     ),
     description: "Scan any GitHub repository for vulnerabilities. Multi-agent pipeline detects SQL injection, XSS, CVEs, and more — then generates patches automatically.",
     cta: "Start a Scan →",
-    stats: { scans: "1.2K+", accuracy: "99.8%", fixes: "847" }
   },
   {
     href:    "/exam",
@@ -29,7 +28,6 @@ const modules = [
     ),
     description: "AI-powered proctoring with real-time tab monitoring, face detection, and keystroke analysis. Flags suspicious behaviour instantly — no human proctor needed.",
     cta: "Create Exam Session →",
-    stats: { exams: "342", avgScore: "97.3%", integrity: "100%" }
   },
 ]
 
