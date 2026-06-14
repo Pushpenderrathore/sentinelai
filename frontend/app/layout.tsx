@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "SentinelAI — Autonomous Threat Detection",
+  title: "SentinelAI: Autonomous Threat Detection",
   description: "AI-powered security auditing and exam integrity platform",
 }
 
