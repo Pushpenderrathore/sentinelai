@@ -3,8 +3,8 @@ LLM Router — system-aware, Groq-first with Ollama fallback.
 
 Routing priority
 ----------------
-1. Groq (llama-3.3-70b-versatile)  — fast cloud inference; requires internet +
-                                      GROQ_API_KEY.
+1. Groq (llama-3.1-8b-instant)     — fast cloud inference; requires internet +
+                                      GROQ_API_KEY. Override with GROQ_MODEL.
 2. Ollama (local)                   — offline fallback.  The model is chosen
                                       automatically based on detected hardware
                                       unless OLLAMA_MODEL is set explicitly.
@@ -85,7 +85,7 @@ def _build_groq():
         if _groq_llm is None:
             from langchain_groq import ChatGroq
             _groq_llm = ChatGroq(
-                model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
                 temperature=0,
             )
         return _groq_llm
@@ -131,7 +131,7 @@ def get_active_backend() -> str:
 def active_model_label() -> str:
     """Human-readable label for the currently active LLM (used in /health)."""
     if _active_backend == "groq":
-        return f"Groq / {os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')}"
+        return f"Groq / {os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')}"
     model   = _ollama_model()
     profile = _detect_system()
     return f"Ollama / {model} (tier={profile.tier}, offline)"
