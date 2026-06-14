@@ -451,11 +451,12 @@ async def delete_scan_history(scan_id: str) -> None:
 
 @app.get("/health")
 async def health() -> dict:
-    from agents.llm_router import get_active_backend
+    from agents.llm_router import get_active_backend, get_system_profile
     return {
         "status": "ok",
         "version": app.version,
         "llm_backend": get_active_backend(),
+        "system_profile": get_system_profile(),
         "active_scans": sum(1 for s in _scans.values() if s["status"] not in ("done", "error")),
         "active_exam_sessions": sum(
             1 for e in _exam_sessions.values() if e["session"]["status"] == "active"
