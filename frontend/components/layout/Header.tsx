@@ -24,7 +24,7 @@ export default function Header() {
           </div>
           <div>
             <h1 className="text-lg font-bold text-white">SentinelAI</h1>
-            <p className="text-xs text-slate-400">Premium</p>
+            <p className="text-xs text-slate-400">Autonomous Threat Detection</p>
           </div>
         </Link>
 
@@ -48,7 +48,7 @@ export default function Header() {
         {/* Actions */}
         <div className="flex items-center gap-2">
           <a
-            href="https://github.com"
+            href="https://github.com/Pushpenderrathore/sentinelai"
             target="_blank"
             rel="noopener noreferrer"
             className="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all duration-300"
