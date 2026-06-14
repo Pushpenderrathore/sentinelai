@@ -279,7 +279,7 @@ async def _run_scan(repo_url: str, scan_id: str) -> None:
         logger.exception("Scan %s crashed", scan_id)
         _scans[scan_id]["status"] = "error"
         await queue.put({"type": "error", "scan_id": scan_id,
-                         "message": "Scan failed due to an internal error — see server logs"})
+                         "message": "Scan failed due to an internal error. See server logs."})
 
     finally:
         cleanup_repo(scan_id)  # remove cloned repo, if any

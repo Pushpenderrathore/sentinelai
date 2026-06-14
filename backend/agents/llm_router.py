@@ -52,6 +52,12 @@ _active_backend:  str        = "groq"
 _groq_failed_at:  float|None = None
 _GROQ_RETRY_SECS: int        = 1800   # 30 minutes
 
+# Transient Groq errors (e.g. 429 rate limit) are retried in-place with backoff
+# before failing over — this matters on hosts with no Ollama (e.g. Render), where
+# a single blip would otherwise lock every scan onto a dead backend.
+_GROQ_MAX_ATTEMPTS:  int   = int(os.getenv("GROQ_MAX_ATTEMPTS", "3"))
+_GROQ_RETRY_BACKOFF: float = float(os.getenv("GROQ_RETRY_BACKOFF", "2.0"))
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -166,22 +172,41 @@ def invoke_llm(messages: list) -> Any:
         backend = _active_backend
 
     if backend == "groq":
-        try:
-            return _build_groq().invoke(messages)
-        except Exception as exc:
-            if _is_groq_error(exc):
-                logger.warning("llm_router: Groq unavailable (%s) — falling back to Ollama", exc)
-                with _state_lock:
-                    _active_backend = "ollama"
-                    _groq_failed_at = time.time()
-                # fall through to Ollama
-            else:
-                raise   # auth error, bad prompt, etc. — don't swallow
+        last_exc: Exception | None = None
+        for attempt in range(_GROQ_MAX_ATTEMPTS):
+            try:
+                return _build_groq().invoke(messages)
+            except Exception as exc:
+                if not _is_groq_error(exc):
+                    raise   # auth error, bad prompt, etc. — don't swallow
+                last_exc = exc
+                if attempt < _GROQ_MAX_ATTEMPTS - 1:
+                    delay = _GROQ_RETRY_BACKOFF * (2 ** attempt)
+                    logger.warning(
+                        "llm_router: Groq transient error (%s) — retry %d/%d in %.1fs",
+                        exc, attempt + 1, _GROQ_MAX_ATTEMPTS, delay,
+                    )
+                    time.sleep(delay)
+        # Retries exhausted — fail over to Ollama for this call.
+        logger.warning(
+            "llm_router: Groq unavailable after %d attempts (%s) — falling back to Ollama",
+            _GROQ_MAX_ATTEMPTS, last_exc,
+        )
+        with _state_lock:
+            _active_backend = "ollama"
+            _groq_failed_at = time.time()
+        # fall through to Ollama
 
     # ── Ollama path ───────────────────────────────────────────────────────────
     try:
         return _build_ollama().invoke(messages)
     except Exception as exc:
+        # Ollama is unavailable too (common in cloud deploys). Don't stay pinned
+        # to a dead backend for the whole cooldown — revert to Groq so the next
+        # call retries the cloud instead of failing fast for 30 minutes.
+        with _state_lock:
+            _active_backend = "groq"
+            _groq_failed_at = None
         model   = _ollama_model()
         profile = _detect_system()
         raise RuntimeError(
