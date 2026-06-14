@@ -11,6 +11,7 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously — in
 ## Table of Contents
 
 - [Modules](#modules)
+- [ML Integration](#ml-integration)
 - [Demo](#demo)
 - [VulnSentinel — Screenshots](#-vulnsentinel--screenshots)
 - [ExamGuard — Screenshots](#-examguard--screenshots)
@@ -43,6 +44,16 @@ Paste a **GitHub repository URL** or any **live website URL**. VulnSentinel auto
 
 ### 🎓 ExamGuard — AI-Powered Exam Integrity Monitor
 A proctoring system that monitors online exams in real time using tab-switch detection, webcam face analysis, **mobile phone detection**, and keystroke dynamics. Immediate rule-based alerts fire the moment suspicious behaviour is detected. Exams are **automatically terminated** after 5 tab switches. When the exam ends, a second agent pipeline performs deep behavioural analysis and generates an integrity report with a verdict.
+
+---
+
+## ML Integration
+
+- Client-side ML models power real-time exam monitoring — face detection and mobile-phone detection run live in the browser
+- Client-side inference keeps sensitive video data local and trims latency for face and mobile-phone analysis
+- Browser-based models (TensorFlow.js / COCO-SSD / MediaPipe / face-api) run directly in the app for fast, responsive results
+- LLM-based reasoning powers VulnSentinel's vulnerability analysis and ExamGuard's post-session integrity reports with remediation guidance
+- Real-time integrity alerts are rule-based and handled by the backend
 
 ---
 
