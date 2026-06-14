@@ -73,8 +73,7 @@ export default function ExamPage() {
         <form onSubmit={handleSubmit} className="glass-card p-6 sm:p-8 mb-8 space-y-6">
           {/* Student Information Section */}
           <div>
-            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 flex items-center justify-center text-xs">👤</span>
+            <h3 className="text-sm font-semibold text-white mb-4">
               Student Information
             </h3>
 
@@ -112,8 +111,7 @@ export default function ExamPage() {
 
           {/* Exam Settings Section */}
           <div className="border-t border-white/10 pt-6">
-            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 flex items-center justify-center text-xs">⏱️</span>
+            <h3 className="text-sm font-semibold text-white mb-4">
               Exam Settings
             </h3>
 
@@ -138,8 +136,7 @@ export default function ExamPage() {
 
           {/* Error message */}
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-start gap-2">
-              <span className="text-red-400 mt-0.5">✕</span>
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
               <p className="text-sm text-red-300">{error}</p>
             </div>
           )}
@@ -174,13 +171,12 @@ export default function ExamPage() {
         {/* Features */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
           {[
-            { icon: "👁️", title: "Face Detection", desc: "Real-time face recognition ensures the registered student is present" },
-            { icon: "⌨️", title: "Keystroke Analysis", desc: "Detects suspicious typing patterns and unusual activity" },
-            { icon: "📱", title: "Tab Monitoring", desc: "Tracks window focus and detects tab switching attempts" },
-            { icon: "🎯", title: "Integrity Scoring", desc: "Comprehensive behavioral analysis with real-time risk assessment" },
+            { title: "Face Detection", desc: "Real-time face recognition ensures the registered student is present" },
+            { title: "Keystroke Analysis", desc: "Detects suspicious typing patterns and unusual activity" },
+            { title: "Tab Monitoring", desc: "Tracks window focus and detects tab switching attempts" },
+            { title: "Integrity Scoring", desc: "Comprehensive behavioral analysis with real-time risk assessment" },
           ].map((feat, i) => (
             <div key={i} className="glass-card p-4">
-              <div className="text-2xl mb-2">{feat.icon}</div>
               <h4 className="text-sm font-semibold text-white mb-1">{feat.title}</h4>
               <p className="text-xs text-slate-400">{feat.desc}</p>
             </div>

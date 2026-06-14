@@ -212,7 +212,7 @@ export default function FaceMonitor({ onFaceEvent, onPhoneEvent, active }: Props
 
         {streaming && phoneVisible && (
           <div className="absolute top-2 left-2 bg-red-600/90 rounded-full px-2 py-1 animate-pulse">
-            <span className="text-[10px] font-mono text-white">📱 PHONE</span>
+            <span className="text-[10px] font-mono text-white">PHONE</span>
           </div>
         )}
       </div>

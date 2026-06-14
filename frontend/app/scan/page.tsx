@@ -157,13 +157,13 @@ export default function ScanPage() {
             </div>
 
             {validationErr && (
-              <p className="text-yellow-400 text-xs font-medium mt-2 flex items-center gap-1">
-                <span>⚠️</span> {validationErr}
+              <p className="text-yellow-400 text-xs font-medium mt-2">
+                {validationErr}
               </p>
             )}
             {error && (
-              <p className="text-red-400 text-xs font-medium mt-2 flex items-center gap-1">
-                <span>✕</span> {error}
+              <p className="text-red-400 text-xs font-medium mt-2">
+                {error}
               </p>
             )}
           </div>
@@ -220,8 +220,7 @@ export default function ScanPage() {
 
         {/* Agent pipeline visualization */}
         <div className="glass-card p-6">
-          <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 flex items-center justify-center text-xs">🤖</span>
+          <h3 className="text-sm font-bold text-white mb-4">
             Multi-Agent Pipeline
           </h3>
 
@@ -248,9 +247,8 @@ export default function ScanPage() {
           </div>
 
           <div className="mt-6 pt-6 border-t border-white/10">
-            <p className="text-xs text-slate-400 flex items-start gap-2">
-              <span className="mt-0.5">💡</span>
-              <span>Each agent specializes in a specific phase of the security audit. Results are synthesized into comprehensive findings with remediation guidance.</span>
+            <p className="text-xs text-slate-400">
+              Each agent specializes in a specific phase of the security audit. Results are synthesized into comprehensive findings with remediation guidance.
             </p>
           </div>
         </div>

@@ -159,10 +159,10 @@ export default function ClassMonitorDashboard() {
       <div className="shrink-0 grid grid-cols-5 border-b border-sentinel-border">
         {[
           { label: "Total",          value: buckets.total,      color: "text-white" },
-          { label: "Clean 🟢",       value: buckets.clean,      color: "text-sentinel-green" },
-          { label: "Warning 🟡",     value: buckets.warning,    color: "text-yellow-400" },
-          { label: "Critical 🔴",    value: buckets.critical,   color: "text-sentinel-red" },
-          { label: "Terminated ⚫",  value: buckets.terminated, color: "text-sentinel-muted" },
+          { label: "Clean",          value: buckets.clean,      color: "text-sentinel-green" },
+          { label: "Warning",        value: buckets.warning,    color: "text-yellow-400" },
+          { label: "Critical",       value: buckets.critical,   color: "text-sentinel-red" },
+          { label: "Terminated",     value: buckets.terminated, color: "text-sentinel-muted" },
         ].map((s) => (
           <div key={s.label} className="text-center py-4 border-r border-sentinel-border last:border-r-0">
             <div className={`text-2xl font-bold font-mono ${s.color}`}>{s.value}</div>
