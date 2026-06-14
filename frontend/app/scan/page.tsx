@@ -140,7 +140,7 @@ export default function ScanPage() {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="github.com/owner/repo  or  https://example.com"
-                className="input-glass pl-11 pr-32"
+                className="input-glass !pl-11 !pr-32"
               />
 
               {scanType && (
