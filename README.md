@@ -1,10 +1,10 @@
-# SentinelAI — Autonomous Threat Detection Platform
+# SentinelAI - Autonomous Threat Detection Platform
 
 > **FAR AWAY 2026 · Team Zen Hackers · Theme: Agentic & Autonomous Systems**
 
-![FAR AWAY 2026 — India's Biggest International Hackathon](docs/screenshots/faraway-theme.jpg)
+![FAR AWAY 2026 - India's Biggest International Hackathon](docs/screenshots/faraway-theme.jpg)
 
-SentinelAI is a multi-agent AI platform that detects threats autonomously — in **source code** and in **online exams** — without requiring human intervention. Two real-world problems. One agentic engine.
+SentinelAI is a multi-agent AI platform that detects threats autonomously - in **source code** and in **online exams** - without requiring human intervention. Two real-world problems. One agentic engine.
 
 ---
 
@@ -13,22 +13,22 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously — in
 - [Modules](#modules)
 - [ML Integration](#ml-integration)
 - [Demo](#demo)
-- [VulnSentinel — Screenshots](#-vulnsentinel--screenshots)
-- [ExamGuard — Screenshots](#-examguard--screenshots)
-- [Sample Scan Results](#vulnsentinel--dual-scan-mode)
+- [VulnSentinel - Screenshots](#-vulnsentinel---screenshots)
+- [ExamGuard - Screenshots](#-examguard---screenshots)
+- [Sample Scan Results](#vulnsentinel---dual-scan-mode)
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
 - [Setup & Run](#setup--run)
   - [Prerequisites](#prerequisites)
-  - [Backend](#1--backend)
+  - [Backend](#1---backend)
   - [Offline / Ollama fallback](#offline--ollama-fallback-optional)
-  - [Frontend](#2--frontend)
+  - [Frontend](#2---frontend)
 - [How It Works](#how-it-works)
-  - [VulnSentinel — 6-Agent Pipeline](#vulnsentinel--6-agent-pipeline-github--website)
+  - [VulnSentinel - 6-Agent Pipeline](#vulnsentinel---6-agent-pipeline-github--website)
   - [Website Scanner Checks](#website-scanner-checks)
-  - [Port Scanner — CVE/CWE Mapping](#port-scanner--cvecwe-mapping)
-  - [ExamGuard — Two-Phase System](#examguard--two-phase-system)
+  - [Port Scanner - CVE/CWE Mapping](#port-scanner---cvecwe-mapping)
+  - [ExamGuard - Two-Phase System](#examguard---two-phase-system)
   - [Real-time Alert Thresholds](#real-time-alert-thresholds-examguard)
 - [WebSocket Message Protocol](#websocket-message-protocol)
 - [API Reference](#api-reference)
@@ -39,17 +39,17 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously — in
 
 ## Modules
 
-### 🔍 VulnSentinel — Autonomous Code & Website Security Auditor
-Paste a **GitHub repository URL** or any **live website URL**. VulnSentinel auto-detects the target type and routes to the right scanner — static analysis for repos, HTTP security checks for websites. Five specialised AI agents then map findings to OWASP Top 10 and CVEs, reason about real-world exploitability, generate patches or remediation guidance, and produce a full security report — all without a human in the loop.
+### 🔍 VulnSentinel - Autonomous Code & Website Security Auditor
+Paste a **GitHub repository URL** or any **live website URL**. VulnSentinel auto-detects the target type and routes to the right scanner - static analysis for repos, HTTP security checks for websites. Five specialised AI agents then map findings to OWASP Top 10 and CVEs, reason about real-world exploitability, generate patches or remediation guidance, and produce a full security report - all without a human in the loop.
 
-### 🎓 ExamGuard — AI-Powered Exam Integrity Monitor
+### 🎓 ExamGuard - AI-Powered Exam Integrity Monitor
 A proctoring system that monitors online exams in real time using tab-switch detection, webcam face analysis, **mobile phone detection**, and keystroke dynamics. Immediate rule-based alerts fire the moment suspicious behaviour is detected. Exams are **automatically terminated** after 5 tab switches. When the exam ends, a second agent pipeline performs deep behavioural analysis and generates an integrity report with a verdict.
 
 ---
 
 ## ML Integration
 
-- Client-side ML models power real-time exam monitoring — face detection and mobile-phone detection run live in the browser
+- Client-side ML models power real-time exam monitoring - face detection and mobile-phone detection run live in the browser
 - Client-side inference keeps sensitive video data local and trims latency for face and mobile-phone analysis
 - Browser-based models (TensorFlow.js / COCO-SSD / MediaPipe / face-api) run directly in the app for fast, responsive results
 - LLM-based reasoning powers VulnSentinel's vulnerability analysis and ExamGuard's post-session integrity reports with remediation guidance
@@ -61,80 +61,80 @@ A proctoring system that monitors online exams in real time using tab-switch det
 
 > 📹 **Demo video:** *(add link after recording)*
 
-**Home — SentinelAI module selector**
+**Home - SentinelAI module selector**
 ![SentinelAI Home](docs/screenshots/home2.png)
 
 ---
 
-## 🔍 VulnSentinel — Screenshots
+## 🔍 VulnSentinel - Screenshots
 
-**Scan input page — auto-detects GitHub repo or live website URL**
+**Scan input page - auto-detects GitHub repo or live website URL**
 ![VulnSentinel Scan Input](docs/screenshots/vulnsentinel-scan-input.png)
 
-**Live agent feed — website scan of Pushpenderrathore.github.io**
+**Live agent feed - website scan of Pushpenderrathore.github.io**
 ![VulnSentinel GitHub.io Scan](docs/screenshots/vulnsentinel-github-scan.png)
 
-**Live agent feed + findings dashboard — example.com website scan**
+**Live agent feed + findings dashboard - example.com website scan**
 ![VulnSentinel Live Results](docs/screenshots/vulnsentinel-live-results.png)
 
 ---
 
-## 🎓 ExamGuard — Screenshots
+## 🎓 ExamGuard - Screenshots
 
 **Create a monitored exam session**
 ![ExamGuard Create Session](docs/screenshots/examguard-create.png)
 
-**Student exam view — live webcam, timer, and Monitored badge**
+**Student exam view - live webcam, timer, and Monitored badge**
 ![ExamGuard Student View](docs/screenshots/examguard-student.png)
 
-**Exam submitted — AI integrity report generated for invigilator**
+**Exam submitted - AI integrity report generated for invigilator**
 ![ExamGuard Submitted](docs/screenshots/examguard-submitted.png)
 
-**Invigilator monitor dashboard — AI agent pipeline running, SUSPICIOUS verdict (60/100)**
+**Invigilator monitor dashboard - AI agent pipeline running, SUSPICIOUS verdict (60/100)**
 ![ExamGuard Monitor Analysis](docs/screenshots/examguard-monitor-analysis.png)
 
-**Invigilator monitor dashboard — idle state, 100/100 CLEAN score**
+**Invigilator monitor dashboard - idle state, 100/100 CLEAN score**
 ![ExamGuard Monitor Idle](docs/screenshots/examguard-monitor-idle.png)
 
 ---
 
-### VulnSentinel — Dual scan mode
+### VulnSentinel - Dual scan mode
 
-#### GitHub Repo Scan — OWASP Mutillidae (18 vulnerabilities)
+#### GitHub Repo Scan - OWASP Mutillidae (18 vulnerabilities)
 
 ```
 Risk Score: 85/100 · Overall Risk: CRITICAL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CRITICAL  12   HIGH  4   MEDIUM  2   LOW  0
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[CRITICAL] A03 Injection  — Command injection via exec() in content-security-policy.php:119
-[CRITICAL] A03 Injection  — User data flows into SQL string in edit-account-profile.php:125
-[CRITICAL] A07 Sec Misc   — Snyk API Key leaked in .github/workflows/scan-with-snyk-code.yml
-[CRITICAL] A07 Sec Misc   — Hardcoded JWT token in src/includes/hints/jwt-hint.inc:46
-[HIGH]     A03 Injection  — shell_exec() with unsanitised $domain in dns-lookup.php:165
-[HIGH]     A05 Sec Misc   — SSL verification disabled in RemoteFileHandler.php:62
+[CRITICAL] A03 Injection  - Command injection via exec() in content-security-policy.php:119
+[CRITICAL] A03 Injection  - User data flows into SQL string in edit-account-profile.php:125
+[CRITICAL] A07 Sec Misc   - Snyk API Key leaked in .github/workflows/scan-with-snyk-code.yml
+[CRITICAL] A07 Sec Misc   - Hardcoded JWT token in src/includes/hints/jwt-hint.inc:46
+[HIGH]     A03 Injection  - shell_exec() with unsanitised $domain in dns-lookup.php:165
+[HIGH]     A05 Sec Misc   - SSL verification disabled in RemoteFileHandler.php:62
 ... + 12 more  · 16 auto-generated patches
 ```
 
-#### Website Scan — brcmcet.edu.in (8 vulnerabilities)
+#### Website Scan - brcmcet.edu.in (8 vulnerabilities)
 
 ```
 Risk Score: 60/100 · Overall Risk: MEDIUM
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CRITICAL   0   HIGH  2   MEDIUM  3   LOW  3
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[HIGH]   A02 Cryptographic Failures    — Missing Strict-Transport-Security header
-[HIGH]   A05 Security Misconfiguration — Missing Content-Security-Policy header
-[MEDIUM] A05 Security Misconfiguration — Missing X-Frame-Options (clickjacking risk)
-[MEDIUM] A05 Security Misconfiguration — Missing X-Content-Type-Options header
-[MEDIUM] A05 Security Misconfiguration — PHPSESSID cookie missing Secure & HttpOnly flags
-[LOW]    A05 Security Misconfiguration — Missing Referrer-Policy header
-[LOW]    A05 Security Misconfiguration — Missing Permissions-Policy header
-[LOW]    A05 Security Misconfiguration — Server header discloses Apache version
+[HIGH]   A02 Cryptographic Failures    - Missing Strict-Transport-Security header
+[HIGH]   A05 Security Misconfiguration - Missing Content-Security-Policy header
+[MEDIUM] A05 Security Misconfiguration - Missing X-Frame-Options (clickjacking risk)
+[MEDIUM] A05 Security Misconfiguration - Missing X-Content-Type-Options header
+[MEDIUM] A05 Security Misconfiguration - PHPSESSID cookie missing Secure & HttpOnly flags
+[LOW]    A05 Security Misconfiguration - Missing Referrer-Policy header
+[LOW]    A05 Security Misconfiguration - Missing Permissions-Policy header
+[LOW]    A05 Security Misconfiguration - Server header discloses Apache version
 · 5 auto-generated remediation patches
 ```
 
-### ExamGuard — Real-time proctoring demo
+### ExamGuard - Real-time proctoring demo
 
 ```
 [00:12] ⚠  WARNING  Tab switch detected (1/3)
@@ -143,7 +143,7 @@ CRITICAL   0   HIGH  2   MEDIUM  3   LOW  3
 [00:55] 📱 WARNING  Mobile phone detected in camera (conf 87%)
 [01:02] ⚠  WARNING  Copy-paste event detected (1/2)
 [01:15] 📱 CRITICAL Repeated phone use detected (2×)
-[01:44] 🚨 CRITICAL Tab switch threshold reached (5) — exam auto-terminated
+[01:44] 🚨 CRITICAL Tab switch threshold reached (5) - exam auto-terminated
 
 Exam auto-terminated after 5 tab switches
 Post-session analysis complete
@@ -201,14 +201,14 @@ Integrity Score: 42/100 · Verdict: FLAGGED 🚨
 |-------|-----------|
 | Agent framework | [LangGraph](https://github.com/langchain-ai/langgraph) |
 | LLM (primary) | Llama 3.3 70B via [Groq](https://console.groq.com) (free tier, cloud) |
-| LLM (offline fallback) | Any local model via [Ollama](https://ollama.com) — auto-switches on rate-limit |
+| LLM (offline fallback) | Any local model via [Ollama](https://ollama.com) - auto-switches on rate-limit |
 | Backend | Python 3.11 · FastAPI · WebSockets |
 | Repo scanning | Semgrep · Bandit (static analysis) |
 | Website scanning | HTTP headers · SSL · CORS · cookie · file exposure · port scan (CVE/CWE) |
 | Frontend | Next.js 14 · TypeScript · Tailwind CSS |
 | Real-time | Native WebSocket (browser ↔ server) |
-| Face detection | `@vladmandic/face-api` (TinyFaceDetector — runs in-browser) |
-| Phone detection | `@tensorflow-models/coco-ssd` (MobileNet V2 — runs in-browser, "cell phone" class) |
+| Face detection | `@vladmandic/face-api` (TinyFaceDetector - runs in-browser) |
+| Phone detection | `@tensorflow-models/coco-ssd` (MobileNet V2 - runs in-browser, "cell phone" class) |
 
 ---
 
@@ -217,7 +217,7 @@ Integrity Score: 42/100 · Verdict: FLAGGED 🚨
 ```
 sentinelai/
 ├── backend/
-│   ├── main.py                     # FastAPI app — all routes & WebSocket endpoints
+│   ├── main.py                     # FastAPI app - all routes & WebSocket endpoints
 │   ├── agents/
 │   │   ├── llm_router.py           # Groq-first LLM router with Ollama offline fallback
 │   │   ├── state.py                # ScanState TypedDict
@@ -231,19 +231,19 @@ sentinelai/
 │   │   ├── bandit_runner.py        # Python static analysis
 │   │   ├── semgrep_runner.py       # Multi-language static analysis
 │   │   ├── website_scanner.py      # HTTP security checks (headers, SSL, cookies, exposed files)
-│   │   ├── port_scanner.py         # Port scan — 25 ports, CVE/CWE risk mapping
+│   │   ├── port_scanner.py         # Port scan - 25 ports, CVE/CWE risk mapping
 │   │   └── owasp_data.py           # OWASP Top 10 2021 knowledge base
 │   └── requirements.txt
 └── frontend/
     ├── app/
-    │   ├── page.tsx                # Homepage — module selector
+    │   ├── page.tsx                # Homepage - module selector
     │   ├── scan/
     │   │   ├── page.tsx            # Repo URL input
     │   │   └── [id]/page.tsx       # Live scan dashboard (split-pane)
     │   └── exam/
     │       ├── page.tsx            # Create exam session (with quick-fill examples)
-    │       ├── [id]/page.tsx       # Student exam view — proctored, auto-terminates at 5 tab switches
-    │       └── [id]/monitor/page.tsx  # Invigilator dashboard — live alerts + AI report
+    │       ├── [id]/page.tsx       # Student exam view - proctored, auto-terminates at 5 tab switches
+    │       └── [id]/monitor/page.tsx  # Invigilator dashboard - live alerts + AI report
     ├── components/
     │   ├── vulnsentinel/
     │   │   ├── AgentFeed.tsx       # Terminal-style live log stream
@@ -264,19 +264,19 @@ sentinelai/
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- [Semgrep](https://semgrep.dev/docs/getting-started/) — `pip install semgrep`
-- [Bandit](https://bandit.readthedocs.io/) — `pip install bandit`
+- [Semgrep](https://semgrep.dev/docs/getting-started/) - `pip install semgrep`
+- [Bandit](https://bandit.readthedocs.io/) - `pip install bandit`
 - Groq API key (free) → [console.groq.com](https://console.groq.com)
 - (Optional) [Ollama](https://ollama.com/download) for offline/fallback mode
 
-### 1 — Backend
+### 1 - Backend
 
 ```bash
 cd backend
 
 # Configure environment
 cp .env.example .env
-# Edit .env — set GROQ_API_KEY=gsk_...  (free at console.groq.com)
+# Edit .env - set GROQ_API_KEY=gsk_...  (free at console.groq.com)
 
 # Install dependencies
 python -m venv .venv && source .venv/bin/activate
@@ -293,18 +293,18 @@ bash run.sh
 SentinelAI works fully offline using a local Ollama model. No internet or API key required.
 
 ```bash
-# 1 — Install Ollama
+# 1 - Install Ollama
 #     macOS:   brew install ollama
 #     Linux:   curl -fsSL https://ollama.com/install.sh | sh
 #     Windows: download from https://ollama.com/download
 
-# 2 — Pull a model (one-time download)
-ollama pull llama3          # 4.7 GB — recommended
-# ollama pull mistral       # 4.4 GB — good alternative
-# ollama pull phi3          # 2.3 GB — lighter, faster
+# 2 - Pull a model (one-time download)
+ollama pull llama3          # 4.7 GB - recommended
+# ollama pull mistral       # 4.4 GB - good alternative
+# ollama pull phi3          # 2.3 GB - lighter, faster
 
-# 3 — Ollama runs as a background service on port 11434 automatically
-#     No extra config needed — SentinelAI detects it automatically.
+# 3 - Ollama runs as a background service on port 11434 automatically
+#     No extra config needed - SentinelAI detects it automatically.
 ```
 
 Add to `backend/.env` if you want to customise the model:
@@ -323,9 +323,9 @@ OLLAMA_BASE_URL=http://localhost:11434
 | No internet at all | Ollama · llama3 | `LLM: Ollama / llama3 (offline)` |
 | Groq recovers after 30 min | Groq (auto-retry) | `LLM: Groq / llama-3.3-70b-versatile` |
 
-The switch is automatic — no restart needed. The active model is logged in the agent feed at the start of every scan.
+The switch is automatic - no restart needed. The active model is logged in the agent feed at the start of every scan.
 
-### 2 — Frontend
+### 2 - Frontend
 
 ```bash
 cd frontend
@@ -344,7 +344,7 @@ NEXT_PUBLIC_WS_URL=wss://api.your-domain.com
 
 ### Production deployment
 
-Set `ENV=production` in `backend/.env` — `run.sh` then runs uvicorn without
+Set `ENV=production` in `backend/.env` - `run.sh` then runs uvicorn without
 auto-reload and with `WORKERS` worker processes. Key hardening knobs
 (all in `backend/.env.example`):
 
@@ -355,14 +355,14 @@ auto-reload and with `WORKERS` worker processes. Key hardening knobs
 | `SCAN_TIMEOUT_SECS` | `600` | Hard kill for a stuck scan pipeline |
 | `ANALYSIS_TIMEOUT_SECS` | `300` | Hard kill for a stuck exam analysis |
 | `SESSION_TTL_SECS` | `86400` | Finished scans/sessions purged from memory after this |
-| `ALLOW_PRIVATE_TARGETS` | `false` | SSRF guard — private/loopback/metadata IPs are blocked unless explicitly enabled for lab use |
+| `ALLOW_PRIVATE_TARGETS` | `false` | SSRF guard - private/loopback/metadata IPs are blocked unless explicitly enabled for lab use |
 
 Notes:
 - Scan targets are DNS-resolved and rejected if they point at private,
   loopback, link-local, or cloud-metadata addresses (SSRF protection).
 - Cloned repos are deleted from the temp dir as soon as a scan finishes.
 - State is in-process memory: run a single backend instance (`WORKERS=1`)
-  unless you move scan/session state to Redis or a database — with multiple
+  unless you move scan/session state to Redis or a database - with multiple
   workers, WebSocket connections may land on a worker that doesn't hold the
   session.
 
@@ -370,9 +370,9 @@ Notes:
 
 ## How It Works
 
-### VulnSentinel — 6-Agent Pipeline (GitHub + Website)
+### VulnSentinel - 6-Agent Pipeline (GitHub + Website)
 
-VulnSentinel accepts two target types — auto-detected from the URL:
+VulnSentinel accepts two target types - auto-detected from the URL:
 
 | Target | Scanner used |
 |--------|-------------|
@@ -412,17 +412,17 @@ User pastes GitHub repo URL or website URL
 | Sensitive file exposure | `/.env`, `/.git/config`, `/wp-config.php`, `/phpinfo.php`, `/phpmyadmin`, backup SQL files, Swagger UI |
 | Info disclosure | `Server` and `X-Powered-By` headers revealing stack details |
 
-### Port Scanner — CVE/CWE Mapping
+### Port Scanner - CVE/CWE Mapping
 
-When a website URL is scanned, VulnSentinel also performs a parallel port scan across 25 common ports. Each open port is matched against a built-in risk database — no external API calls needed.
+When a website URL is scanned, VulnSentinel also performs a parallel port scan across 25 common ports. Each open port is matched against a built-in risk database - no external API calls needed.
 
 | Port | Service | Severity | Key CVEs |
 |------|---------|----------|---------|
 | 445 | SMB | CRITICAL | CVE-2017-0144 EternalBlue, CVE-2020-0796 SMBGhost |
 | 3389 | RDP | CRITICAL | CVE-2019-0708 BlueKeep, CVE-2019-1182 DejaBlue |
-| 6379 | Redis | CRITICAL | CVE-2022-0543 Lua RCE — no auth by default |
-| 9200 | Elasticsearch | CRITICAL | CVE-2014-3120 RCE — no auth by default |
-| 27017 | MongoDB | CRITICAL | CVE-2013-4650 — no auth by default |
+| 6379 | Redis | CRITICAL | CVE-2022-0543 Lua RCE - no auth by default |
+| 9200 | Elasticsearch | CRITICAL | CVE-2014-3120 RCE - no auth by default |
+| 27017 | MongoDB | CRITICAL | CVE-2013-4650 - no auth by default |
 | 3306 | MySQL | CRITICAL | CVE-2012-2122 auth bypass |
 | 5432 | PostgreSQL | CRITICAL | CVE-2019-9193 RCE via COPY |
 | 23 | Telnet | CRITICAL | Cleartext credentials (CWE-319) |
@@ -431,9 +431,9 @@ When a website URL is scanned, VulnSentinel also performs a parallel port scan a
 
 Each open port appears as a VulnCard in the findings panel showing: port badge, all CVEs, CWE chips, and a fix recommendation.
 
-### ExamGuard — Two-Phase System
+### ExamGuard - Two-Phase System
 
-**Phase 1 — Real-time (during exam)**
+**Phase 1 - Real-time (during exam)**
 ```
 Browser detects event (tab switch / face absent / phone in frame / copy-paste)
         │
@@ -444,7 +444,7 @@ Browser detects event (tab switch / face absent / phone in frame / copy-paste)
    Tab switches reach 5? → exam auto-terminated, student sees "Exam Terminated" screen
 ```
 
-**Phase 2 — Deep analysis (after exam ends)**
+**Phase 2 - Deep analysis (after exam ends)**
 ```
 POST /api/exam/{id}/analyze
         │
@@ -452,7 +452,7 @@ POST /api/exam/{id}/analyze
         │
    [Behavior Analyzer]  LLM identifies suspicious patterns across the full event log
         │
-   [Anomaly Scorer]     Scores each category 0–100 for suspicion level
+   [Anomaly Scorer]     Scores each category 0-100 for suspicion level
         │
    [Alert Generator]    Produces prioritised, actionable alerts for the invigilator
         │
@@ -483,7 +483,7 @@ The webcam feed is analysed every 3 seconds using two parallel in-browser ML mod
 | Model | Purpose | Size |
 |-------|---------|------|
 | `@vladmandic/face-api` TinyFaceDetector | Face counting & presence | ~190 KB |
-| `@tensorflow-models/coco-ssd` MobileNet V2 | Object detection — "cell phone" class | ~3 MB |
+| `@tensorflow-models/coco-ssd` MobileNet V2 | Object detection - "cell phone" class | ~3 MB |
 
 Both models run entirely client-side (WebGL) with no cloud API calls. When a phone is detected:
 - A red **📱 PHONE** badge flashes on the camera overlay in the student view
@@ -556,7 +556,7 @@ Both models run entirely client-side (WebGL) with no cloud API calls. When a pho
 
 ## Team
 
-**Team Zen Hackers** — FAR AWAY 2026
+**Team Zen Hackers** - FAR AWAY 2026
 
 | Name | Role |
 |------|------|
@@ -570,4 +570,4 @@ Both models run entirely client-side (WebGL) with no cloud API calls. When a pho
 
 ## License
 
-MIT — built for FAR AWAY 2026. Not for production use without security review.
+MIT - built for FAR AWAY 2026. Not for production use without security review.
