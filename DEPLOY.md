@@ -15,7 +15,7 @@ ML dependencies and fits the free tier.
 
 ---
 
-## 0 — Push to GitHub
+## 0 - Push to GitHub
 
 ```bash
 git push origin master
@@ -25,7 +25,7 @@ Both platforms deploy from the repo, so everything below just connects to it.
 
 ---
 
-## 1 — Backend on Render
+## 1 - Backend on Render
 
 1. Sign in at [render.com](https://render.com) with GitHub.
 2. **New + → Blueprint**, pick this repo. Render reads `render.yaml` and
@@ -39,11 +39,11 @@ Both platforms deploy from the repo, so everything below just connects to it.
    `{"status":"ok",...}`.
 
 > **Free-tier note:** the service spins down after ~15 min idle, so the first
-> request after a pause takes ~30–60 s to wake (cold start). Fine for a demo.
+> request after a pause takes ~30-60 s to wake (cold start). Fine for a demo.
 
 ---
 
-## 2 — Frontend on Vercel
+## 2 - Frontend on Vercel
 
 1. Sign in at [vercel.com](https://vercel.com) with GitHub, **Add New → Project**,
    import this repo.
@@ -56,18 +56,18 @@ Both platforms deploy from the repo, so everything below just connects to it.
 
 ---
 
-## 3 — Connect CORS back to the frontend
+## 3 - Connect CORS back to the frontend
 
 1. In Render → `sentinelai-backend` → **Environment**, set:
    - `ALLOWED_ORIGINS` = `https://sentinelai.vercel.app` (your real Vercel URL)
-2. Save — Render redeploys automatically.
+2. Save - Render redeploys automatically.
 
 `render.yaml` already allows `*.vercel.app` preview URLs via
 `ALLOWED_ORIGIN_REGEX`, so preview deployments work too.
 
 ---
 
-## 4 — Verify end to end
+## 4 - Verify end to end
 
 - Open your Vercel URL.
 - **VulnSentinel:** scan `https://example.com` → live agent feed + report.
@@ -83,10 +83,10 @@ automatically.
 
 ## Notes & limits (free tier)
 
-- Backend state is **in-memory** — a single instance only. Render free is
+- Backend state is **in-memory** - a single instance only. Render free is
   single-instance, so this is fine; scans/sessions reset if the service
   restarts or spins down.
-- Cold starts (~30–60 s) on the first hit after idle.
+- Cold starts (~30-60 s) on the first hit after idle.
 - `ALLOW_PRIVATE_TARGETS=false` blocks scanning internal/localhost addresses
   (SSRF protection). Leave it off in production.
 - Repo scanning shells out to `git`, `semgrep`, and `bandit`; Render's free
