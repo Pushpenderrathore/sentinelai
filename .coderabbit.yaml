@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit disabled — no automatic PR reviews, summaries, or chatter.
+# Re-enable by setting these back to true (or deleting this file).
+reviews:
+  # Don't auto-review pull requests
+  auto_review:
+    enabled: false
+  # Suppress the comment clutter on every PR
+  high_level_summary: false
+  review_status: false
+  poem: false
+  collapse_walkthrough: true
+  sequence_diagrams: false
+  changed_files_summary: false
+  related_issues: false
+  related_prs: false
+chat:
+  # Don't auto-reply to comments
+  auto_reply: false
