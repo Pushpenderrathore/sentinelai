@@ -37,6 +37,7 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
   const [report, setReport]       = useState<Report | null>(null)
   const [activeNode, setActiveNode] = useState<string>("")
   const [scanDone, setScanDone]   = useState(false)
+  const [scanError, setScanError] = useState<string | null>(null)
 
   const { status } = useWebSocket(wsUrl, (msg) => {
     if (msg.type === "update") {
@@ -50,8 +51,9 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
       setScanDone(true)
     }
     if (msg.type === "error") {
-      setLogs((prev) => [...prev, `[ERROR] ${msg.message as string}`])
-      setActiveNode("")
+      const message = (msg.message as string) ?? "Scan failed due to an internal error"
+      setLogs((prev) => [...prev, `[ERROR] ${message}`])
+      setScanError(message)
     }
   })
 
@@ -145,7 +147,10 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
           >
             <div className="p-4">
               <ScanProgress
-                scanId={scanId}
+                activeNode={activeNode}
+                status={status}
+                done={scanDone}
+                error={scanError}
                 onComplete={() => {
                   resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
                 }}

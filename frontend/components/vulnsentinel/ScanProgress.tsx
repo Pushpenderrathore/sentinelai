@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useRef } from "react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,29 +15,41 @@ interface AgentState {
   progress: number
 }
 
-interface SSEEvent {
-  agent: string
-  status: "running" | "done" | "error"
-  message: string
-  progress: number
-}
-
 interface ScanProgressProps {
-  scanId: string
+  /** Last node name received over the scan WebSocket ("" before the first update). */
+  activeNode: string
+  /** WebSocket connection status from the parent. */
+  status: "connecting" | "open" | "closed" | "error"
+  /** True once the final report has been received. */
+  done: boolean
+  /** Error message if the scan failed. */
+  error?: string | null
   onComplete?: () => void
   onRetry?: () => void
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
-
+// Visible pipeline rows, in execution order. Positions 0-4 line up with the
+// first five backend graph nodes below.
 const AGENT_PIPELINE: { key: string; label: string; description: string }[] = [
   { key: "orchestrator",     label: "Orchestrator",     description: "Plans scan strategy" },
-  { key: "scanner_agent",    label: "Scanner Agent",    description: "Clones repo · runs Semgrep + Bandit" },
+  { key: "scanner",          label: "Scanner Agent",    description: "Clones repo · runs Semgrep + Bandit" },
   { key: "vuln_analyzer",    label: "Vuln Analyzer",    description: "Maps findings to OWASP & CVEs" },
   { key: "exploit_reasoner", label: "Exploit Reasoner", description: "Assesses real-world exploitability" },
   { key: "fix_suggester",    label: "Fix Suggester",    description: "Generates code patches" },
+]
+
+// Backend graph node order. astream emits a node's name once it has finished,
+// so the highest-seen node tells us everything before it is done. The trailing
+// report_generator node is not shown as a row but counts toward progress.
+const NODE_ORDER = [
+  "orchestrator",
+  "scanner",
+  "vuln_analyzer",
+  "exploit_reasoner",
+  "fix_suggester",
+  "report_generator",
 ]
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -176,41 +188,15 @@ function AgentRow({ agent, isLast }: { agent: AgentState; isLast: boolean }) {
             >
               {agent.description}
             </span>
-
-            {/* Live progress badge */}
-            {isRunning && agent.progress > 0 && (
-              <span
-                className="ml-auto text-xs font-mono tabular-nums"
-                style={{ color: "#00d4ff99" }}
-              >
-                {agent.progress}%
-              </span>
-            )}
           </div>
 
-          {/* Live message */}
-          {(isRunning || isError) && agent.message && (
+          {/* Error message */}
+          {isError && agent.message && (
             <div
               className="mt-1.5 font-mono text-[11px] leading-relaxed break-all"
-              style={{
-                color: isError ? "#ff336699" : "#00d4ff88",
-                animation: isRunning ? "fadeIn 0.3s ease-out" : undefined,
-              }}
+              style={{ color: "#ff336699" }}
             >
-              <span style={{ color: isRunning ? "#00d4ff44" : "#ff336644" }}>
-                {isRunning ? "▶ " : "✕ "}
-              </span>
               {agent.message}
-            </div>
-          )}
-
-          {/* Done message (last one) */}
-          {isDone && agent.message && (
-            <div
-              className="mt-1 font-mono text-[11px]"
-              style={{ color: "#00d4ff55" }}
-            >
-              ✓ {agent.message}
             </div>
           )}
         </div>
@@ -221,150 +207,80 @@ function AgentRow({ agent, isLast }: { agent: AgentState; isLast: boolean }) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function ScanProgress({ scanId, onComplete, onRetry }: ScanProgressProps) {
-  const [agents, setAgents] = useState<AgentState[]>(
-    AGENT_PIPELINE.map((a) => ({ ...a, status: "pending", message: "", progress: 0 }))
-  )
-  const [overallProgress, setOverallProgress] = useState(0)
-  const [errorBanner, setErrorBanner]         = useState<string | null>(null)
-  const [allDone, setAllDone]                 = useState(false)
-  const [connectionState, setConnectionState] = useState<"connecting" | "live" | "closed" | "error">("connecting")
+export default function ScanProgress({ activeNode, status, done, error, onComplete, onRetry }: ScanProgressProps) {
+  const resultsRef = useRef<HTMLDivElement | null>(null)
 
-  const esRef           = useRef<EventSource | null>(null)
-  const reconnectTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const reconnectCount  = useRef(0)
-  const isMounted       = useRef(true)
-  const resultsRef      = useRef<HTMLDivElement | null>(null)
+  // Highest backend node seen so far (it finishes before being emitted), so
+  // everything up to and including this index is complete.
+  const completedIdx = activeNode ? NODE_ORDER.indexOf(activeNode) : -1
+  // The next node after the last completed one is the one currently running.
+  const runningIdx = completedIdx + 1
 
-  // Stable ref so callbacks don't go stale
-  const agentsRef = useRef(agents)
-  agentsRef.current = agents
-
-  // ── SSE connection ──────────────────────────────────────────
-
-  const connect = useCallback(() => {
-    if (!isMounted.current) return
-
-    // Close any existing connection
-    esRef.current?.close()
-
-    const url = `${API_BASE}/api/scan/progress?id=${encodeURIComponent(scanId)}`
-    const es = new EventSource(url)
-    esRef.current = es
-    setConnectionState("connecting")
-
-    es.onopen = () => {
-      if (!isMounted.current) return
-      reconnectCount.current = 0
-      setConnectionState("live")
+  // Per-row status derived purely from progress state.
+  const agents: AgentState[] = AGENT_PIPELINE.map((a, i) => {
+    let s: AgentStatus
+    if (done)                              s = "done"
+    else if (error && i === runningIdx)    s = "error"
+    else if (i <= completedIdx)            s = "done"
+    else if (i === runningIdx && !error)   s = "running"
+    else                                   s = "pending"
+    return {
+      ...a,
+      status: s,
+      message: s === "error" ? (error ?? "") : "",
+      progress: 0,
     }
+  })
 
-    es.onmessage = (e: MessageEvent) => {
-      if (!isMounted.current) return
-      try {
-        const event: SSEEvent = JSON.parse(e.data)
-        handleEvent(event)
-      } catch {
-        // non-JSON heartbeat — ignore
-      }
-    }
+  // Overall progress across all 6 backend steps. The running step gets half
+  // credit so the bar always shows motion; capped at 99% until the report lands.
+  let overallProgress: number
+  if (done) {
+    overallProgress = 100
+  } else if (error) {
+    const steps = Math.max(completedIdx + 1, 0)
+    overallProgress = Math.round((steps / NODE_ORDER.length) * 100)
+  } else {
+    const steps = completedIdx + 1
+    const runningCredit = steps < NODE_ORDER.length ? 0.5 : 0
+    overallProgress = Math.min(99, Math.round(((steps + runningCredit) / NODE_ORDER.length) * 100))
+  }
 
-    es.onerror = () => {
-      if (!isMounted.current) return
-      es.close()
+  const doneCount = done ? AGENT_PIPELINE.length : Math.min(completedIdx + 1, AGENT_PIPELINE.length)
+  const runningAgent = agents.find((a) => a.status === "running")
+  const finalising = !done && !error && completedIdx >= AGENT_PIPELINE.length - 1
 
-      // Don't reconnect if scan finished
-      if (allDoneRef.current) {
-        setConnectionState("closed")
-        return
-      }
+  const headerLabel =
+    done   ? "Scan complete"
+  : error  ? "Scan failed"
+  : finalising ? "Finalising report…"
+  : runningAgent ? runningAgent.label
+  : status === "connecting" ? "Connecting…"
+  : "Initialising…"
 
-      setConnectionState("error")
+  const connLabel =
+    done   ? "COMPLETE"
+  : error  ? "ERROR"
+  : status === "open"       ? "LIVE"
+  : status === "connecting" ? "CONNECTING"
+  : "CLOSED"
 
-      // Exponential backoff: 2s, 4s, 8s, 16s, cap at 30s
-      const delay = Math.min(2000 * Math.pow(2, reconnectCount.current), 30_000)
-      reconnectCount.current += 1
-
-      reconnectTimer.current = setTimeout(() => {
-        if (isMounted.current && !allDoneRef.current) connect()
-      }, delay)
-    }
-  }, [scanId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Need a ref to `allDone` inside the closure without re-creating `connect`
-  const allDoneRef = useRef(false)
-  allDoneRef.current = allDone
-
-  const handleEvent = useCallback((event: SSEEvent) => {
-    setAgents((prev) => {
-      const next = prev.map((a) => {
-        if (a.key !== event.agent) return a
-        return {
-          ...a,
-          status:   event.status,
-          message:  event.message ?? a.message,
-          progress: event.progress ?? a.progress,
-        }
-      })
-
-      // Recompute overall progress from per-agent progress values
-      const total = next.reduce((sum, a) => {
-        if (a.status === "done")    return sum + 100
-        if (a.status === "running") return sum + (a.progress ?? 0)
-        return sum
-      }, 0)
-      const computed = Math.round(total / next.length)
-      setOverallProgress(computed)
-
-      // Check if all done or any errored
-      const anyError = next.some((a) => a.status === "error")
-      const allComplete = next.every((a) => a.status === "done")
-
-      if (anyError && event.status === "error") {
-        setErrorBanner(event.message || "An agent encountered an error.")
-        esRef.current?.close()
-        setConnectionState("closed")
-      }
-
-      if (allComplete) {
-        setOverallProgress(100)
-        setAllDone(true)
-        allDoneRef.current = true
-        esRef.current?.close()
-        setConnectionState("closed")
-      }
-
-      return next
-    })
-  }, [])
+  const connColor =
+    done   ? "#00ff88"
+  : error  ? "#ff3366"
+  : status === "open"       ? "#00ff88"
+  : status === "connecting" ? "#ffb800"
+  : "#64748b"
 
   // ── Auto-scroll on completion ───────────────────────────────
-
   useEffect(() => {
-    if (!allDone) return
+    if (!done) return
     const timer = setTimeout(() => {
       resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
       onComplete?.()
     }, 1500)
     return () => clearTimeout(timer)
-  }, [allDone, onComplete])
-
-  // ── Lifecycle ───────────────────────────────────────────────
-
-  useEffect(() => {
-    isMounted.current = true
-    connect()
-    return () => {
-      isMounted.current = false
-      esRef.current?.close()
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
-    }
-  }, [connect])
-
-  // ─── Derived display values ─────────────────────────────────
-
-  const doneCount    = agents.filter((a) => a.status === "done").length
-  const runningAgent = agents.find((a) => a.status === "running")
+  }, [done, onComplete])
 
   // ─── Render ─────────────────────────────────────────────────
 
@@ -398,18 +314,12 @@ export default function ScanProgress({ scanId, onComplete, onRetry }: ScanProgre
             <span
               className="w-1.5 h-1.5 rounded-full"
               style={{
-                background: connectionState === "live"       ? "#00ff88"
-                          : connectionState === "error"      ? "#ff3366"
-                          : connectionState === "connecting" ? "#ffb800"
-                          : "#64748b",
-                animation: connectionState === "live" ? "pulse 2s infinite" : undefined,
-                boxShadow: connectionState === "live" ? "0 0 6px #00ff8888" : undefined,
+                background: connColor,
+                animation: connLabel === "LIVE" ? "pulse 2s infinite" : undefined,
+                boxShadow: connLabel === "LIVE" ? "0 0 6px #00ff8888" : undefined,
               }}
             />
-            {connectionState === "live"       ? "LIVE"
-           : connectionState === "error"      ? "RECONNECTING"
-           : connectionState === "connecting" ? "CONNECTING"
-           : "CLOSED"}
+            {connLabel}
           </span>
 
           {/* Step counter */}
@@ -423,16 +333,12 @@ export default function ScanProgress({ scanId, onComplete, onRetry }: ScanProgre
       <div className="px-5 pt-4 pb-2">
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-xs" style={{ color: "#64748b" }}>
-            {allDone
-              ? "Scan complete"
-              : runningAgent
-              ? runningAgent.label
-              : "Initialising…"}
+            {headerLabel}
           </span>
           <span
             className="text-xs font-mono tabular-nums"
             style={{
-              color: allDone ? "#00ff88" : "#00d4ff",
+              color: done ? "#00ff88" : error ? "#ff3366" : "#00d4ff",
               transition: "color 0.5s",
             }}
           >
@@ -449,8 +355,10 @@ export default function ScanProgress({ scanId, onComplete, onRetry }: ScanProgre
             style={{
               height:     "100%",
               width:      `${overallProgress}%`,
-              background: allDone
+              background: done
                 ? "linear-gradient(90deg, #00d4ff, #00ff88)"
+                : error
+                ? "linear-gradient(90deg, #ff3366, #ff6688)"
                 : "linear-gradient(90deg, #00d4ff, #0099bb)",
               transition: "width 0.6s cubic-bezier(0.4,0,0.2,1), background 0.5s",
               borderRadius: "9999px",
@@ -461,7 +369,7 @@ export default function ScanProgress({ scanId, onComplete, onRetry }: ScanProgre
       </div>
 
       {/* ── Error banner ── */}
-      {errorBanner && (
+      {error && (
         <div
           className="mx-5 mt-3 rounded-xl px-4 py-3 flex items-start gap-3"
           style={{
@@ -484,7 +392,7 @@ export default function ScanProgress({ scanId, onComplete, onRetry }: ScanProgre
               Scan error
             </p>
             <p className="text-xs break-words" style={{ color: "#ff336699" }}>
-              {errorBanner}
+              {error}
             </p>
           </div>
           {onRetry && (
@@ -517,7 +425,7 @@ export default function ScanProgress({ scanId, onComplete, onRetry }: ScanProgre
       </div>
 
       {/* ── All done banner ── */}
-      {allDone && (
+      {done && (
         <div
           className="mx-5 mb-5 rounded-xl px-4 py-3 flex items-center gap-3"
           style={{
