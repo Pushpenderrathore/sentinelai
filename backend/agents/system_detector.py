@@ -81,7 +81,7 @@ def _detect_ram_gb() -> float:
         return psutil.virtual_memory().total / (1024 ** 3)
     except ImportError:
         pass
-    # /proc/meminfo fallback (Linux)
+    # /proc/meminfo (Linux)
     try:
         with open("/proc/meminfo") as f:
             for line in f:
@@ -89,6 +89,38 @@ def _detect_ram_gb() -> float:
                     kb = int(line.split()[1])
                     return kb / (1024 ** 2)
     except OSError:
+        pass
+    # sysctl hw.memsize (macOS / BSD) — psutil is optional and /proc does not
+    # exist here, so without this every Mac reports 0 GB and is misclassified
+    # as the lowest tier.
+    try:
+        import subprocess
+        out = subprocess.run(["sysctl", "-n", "hw.memsize"],
+                             capture_output=True, text=True, timeout=5)
+        if out.returncode == 0 and out.stdout.strip().isdigit():
+            return int(out.stdout.strip()) / (1024 ** 3)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # GlobalMemoryStatusEx (Windows)
+    try:
+        import ctypes
+
+        class _MemStatus(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong),
+                        ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong),
+                        ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong),
+                        ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong),
+                        ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+        status = _MemStatus()
+        status.dwLength = ctypes.sizeof(_MemStatus)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return status.ullTotalPhys / (1024 ** 3)
+    except (AttributeError, OSError):
         pass
     logger.warning("system_detector: could not read RAM — assuming 0 GB")
     return 0.0
@@ -123,6 +155,14 @@ def _detect_gpu() -> bool:
         if torch.cuda.is_available() or getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
             return True
     except ImportError:
+        pass
+    # Apple Silicon — every M-series chip has a Metal/MPS-capable GPU. Detected
+    # without importing torch, which is not a dependency of this project.
+    try:
+        import platform
+        if platform.system() == "Darwin" and platform.machine() == "arm64":
+            return True
+    except Exception:
         pass
     # nvidia-smi binary present?
     try:
