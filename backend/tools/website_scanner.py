@@ -127,6 +127,49 @@ SENSITIVE_PATHS = [
     ("/phpmyadmin",       "LOW",      _v_phpmyadmin,   "phpMyAdmin panel reachable"),
 ]
 
+# ── Headers a page can deliver from its own markup ────────────────────────────
+# Static hosts (GitHub Pages, S3 without CloudFront) let you serve files but not
+# set response headers, so a site's only way to apply these is from inside the
+# document. Browsers honour both deliveries, so grading headers alone reports a
+# policy as missing when it is actually enforced.
+#
+# Only these two work from markup. X-Frame-Options, X-Content-Type-Options,
+# Permissions-Policy and HSTS are ignored in a meta tag by every browser, so for
+# those the response header remains the only valid delivery.
+
+_META_CSP_RE = re.compile(
+    r"""<meta[^>]+http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>""",
+    re.IGNORECASE,
+)
+_META_REFERRER_RE = re.compile(
+    r"""<meta[^>]+name\s*=\s*["']?referrer["']?[^>]*>""",
+    re.IGNORECASE,
+)
+# Capture the quote style and require the matching close. A CSP value is full of
+# single quotes ("default-src 'self'"), so a character class of ["'] would stop
+# at the first one and truncate the policy.
+_CONTENT_ATTR_RE = re.compile(r"""content\s*=\s*(["'])(.*?)\1""",
+                              re.IGNORECASE | re.DOTALL)
+
+META_DELIVERABLE_HEADERS = {"Content-Security-Policy", "Referrer-Policy"}
+
+
+def meta_delivered_headers(html: str) -> dict[str, str]:
+    """Return security policies the document declares in its own <head>."""
+    found: dict[str, str] = {}
+    head = html[:200_000]
+
+    for regex, header in ((_META_CSP_RE, "content-security-policy"),
+                          (_META_REFERRER_RE, "referrer-policy")):
+        match = regex.search(head)
+        if not match:
+            continue
+        content = _CONTENT_ATTR_RE.search(match.group(0))
+        if content and content.group(2).strip():
+            found[header] = content.group(2).strip()
+    return found
+
+
 SECURITY_HEADERS = {
     "Strict-Transport-Security":    ("HIGH",   "A02:2021-Cryptographic Failures"),
     "Content-Security-Policy":      ("HIGH",   "A05:2021-Security Misconfiguration"),
@@ -327,11 +370,34 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
                           f"URL scheme: {parsed.scheme}"))
 
     # ── 3. Missing security headers ─────────────────────────────────────────
+    # A policy declared in the document counts as applied, because the browser
+    # applies it. Only for the two headers browsers actually honour from markup.
+    try:
+        from_meta = meta_delivered_headers(resp.text)
+    except Exception:
+        from_meta = {}
+    meta["meta_delivered"] = sorted(from_meta)
+
     for header, (sev, cat) in SECURITY_HEADERS.items():
-        if header.lower() not in hdrs:
-            findings.append(_f(url, sev, cat,
-                              f"Missing security header: {header}",
-                              f"HTTP response has no {header} header"))
+        key = header.lower()
+        if key in hdrs:
+            continue
+        if header in META_DELIVERABLE_HEADERS and key in from_meta:
+            # Applied, just not via a response header.
+            if header == "Content-Security-Policy":
+                findings.append(_f(
+                    url, "LOW", "A05:2021-Security Misconfiguration",
+                    "Content-Security-Policy is delivered by meta tag, so "
+                    "frame-ancestors and reporting are ignored",
+                    "A meta-delivered CSP is enforced by the browser, but "
+                    "frame-ancestors, report-uri, report-to and sandbox only "
+                    "work as a response header. Clickjacking protection still "
+                    "needs X-Frame-Options or a header-delivered CSP.",
+                ))
+            continue
+        findings.append(_f(url, sev, cat,
+                          f"Missing security header: {header}",
+                          f"HTTP response has no {header} header"))
 
     # ── 4. Server / technology info disclosure ──────────────────────────────
     for h in ("server", "x-powered-by", "x-aspnet-version", "x-aspnetmvc-version"):

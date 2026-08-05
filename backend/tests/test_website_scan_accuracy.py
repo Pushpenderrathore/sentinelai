@@ -119,6 +119,82 @@ class TestBlockedScanReportsNothing:
         assert "X-Frame-Options" not in joined
 
 
+# ── Policies delivered from the document ─────────────────────────────────────
+
+class TestMetaDeliveredHeaders:
+    """
+    Static hosts cannot set response headers, so a site's only way to apply a
+    CSP is a meta tag. The browser enforces it either way, so reporting it as
+    missing is wrong. Found by fixing a real site and watching the scan still
+    call it missing.
+    """
+
+    CSP_PAGE = ('<html><head><meta http-equiv="Content-Security-Policy" '
+                'content="default-src \'self\'"></head><body>hi</body></html>')
+
+    def test_csp_meta_tag_is_recognised(self):
+        found = website_scanner.meta_delivered_headers(self.CSP_PAGE)
+        assert found["content-security-policy"] == "default-src 'self'"
+
+    def test_referrer_meta_tag_is_recognised(self):
+        html = '<meta name="referrer" content="strict-origin-when-cross-origin">'
+        found = website_scanner.meta_delivered_headers(html)
+        assert found["referrer-policy"] == "strict-origin-when-cross-origin"
+
+    def test_empty_content_is_not_a_policy(self):
+        html = '<meta http-equiv="Content-Security-Policy" content="">'
+        assert website_scanner.meta_delivered_headers(html) == {}
+
+    def test_page_without_meta_policies(self):
+        assert website_scanner.meta_delivered_headers("<html><head></head>") == {}
+
+    def test_only_csp_and_referrer_may_come_from_markup(self):
+        """Browsers ignore the others in a meta tag, so they must stay required."""
+        assert website_scanner.META_DELIVERABLE_HEADERS == {
+            "Content-Security-Policy", "Referrer-Policy"
+        }
+
+    def _scan(self, monkeypatch, body, headers):
+        monkeypatch.setattr(website_scanner, "assert_safe_target", lambda u: u)
+
+        class _Session:
+            headers = {}
+
+            def get(self, url, **k):
+                if url.endswith("/"):
+                    return _Resp(200, headers, body)
+                return _Resp(404, {}, "")
+
+        monkeypatch.setattr(website_scanner.requests, "Session", lambda: _Session())
+        return website_scanner.scan_website("https://example.com/")
+
+    def test_meta_csp_clears_the_missing_header_finding(self, monkeypatch):
+        findings = self._scan(monkeypatch, self.CSP_PAGE, {"server": "GitHub.com"})
+        assert not any("Missing security header: Content-Security-Policy" in f["description"]
+                       for f in findings)
+
+    def test_meta_csp_still_notes_the_frame_ancestors_limit(self, monkeypatch):
+        findings = self._scan(monkeypatch, self.CSP_PAGE, {"server": "GitHub.com"})
+        notes = [f for f in findings if "frame-ancestors" in f["description"]]
+        assert len(notes) == 1
+        assert notes[0]["severity"] == "LOW"
+
+    def test_a_meta_tag_does_not_satisfy_x_frame_options(self, monkeypatch):
+        """X-Frame-Options in a meta tag is ignored by browsers, so it stays missing."""
+        html = ('<meta http-equiv="X-Frame-Options" content="DENY">'
+                + self.CSP_PAGE)
+        findings = self._scan(monkeypatch, html, {"server": "GitHub.com"})
+        assert any("Missing security header: X-Frame-Options" in f["description"]
+                   for f in findings)
+
+    def test_real_header_takes_precedence_and_adds_no_note(self, monkeypatch):
+        findings = self._scan(
+            monkeypatch, "<html></html>",
+            {"content-security-policy": "default-src 'self'", "server": "nginx"},
+        )
+        assert not any("Content-Security-Policy" in f["description"] for f in findings)
+
+
 # ── Port findings ────────────────────────────────────────────────────────────
 
 class TestPortFindings:
