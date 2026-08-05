@@ -15,6 +15,17 @@ def _bandit_bin() -> str:
     return "bandit"
 
 
+def _relative(path: str, repo_path: str) -> str:
+    """Report paths relative to the repo root. Repos are cloned into a temp
+    directory, so the absolute path leaks a meaningless location into reports."""
+    if not path:
+        return path
+    try:
+        return os.path.relpath(path, repo_path)
+    except ValueError:
+        return path
+
+
 def run_bandit(repo_path: str) -> list[dict]:
     result = subprocess.run(
         [_bandit_bin(), "-r", repo_path, "-f", "json", "-q"],
@@ -32,7 +43,7 @@ def run_bandit(repo_path: str) -> list[dict]:
     for issue in data.get("results", []):
         normalized.append({
             "source": "bandit",
-            "file": issue.get("filename", ""),
+            "file": _relative(issue.get("filename", ""), repo_path),
             "line": issue.get("line_number", 0),
             "severity": issue.get("issue_severity", "LOW").upper(),
             "confidence": issue.get("issue_confidence", "LOW").upper(),
