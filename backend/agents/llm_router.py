@@ -103,11 +103,20 @@ def _build_ollama():
         return _ollama_llm
 
 
+def _groq_configured() -> bool:
+    """True when a Groq API key is present in the environment."""
+    return bool(os.getenv("GROQ_API_KEY", "").strip())
+
+
 def _is_groq_error(exc: Exception) -> bool:
     """Return True only for transient errors that justify falling back to Ollama."""
     exc_type = type(exc).__name__.lower()
     msg = str(exc).lower()
-    # Never swallow auth errors — wrong key is a config problem, not an outage.
+    # A WRONG key is a config problem and must surface. A MISSING key is not —
+    # it just means the cloud backend was never set up, so Ollama should serve
+    # the request instead of the whole pipeline dying.
+    if "must be set" in msg or "api_key client option" in msg:
+        return True
     if "authentication" in exc_type or "invalid_api_key" in msg or "401" in msg:
         return False
     return any(k in msg or k in exc_type for k in (
@@ -125,12 +134,16 @@ def _groq_cooldown_elapsed() -> bool:
 
 def get_active_backend() -> str:
     """Return 'groq' or 'ollama'."""
+    # Report the backend that would actually serve the next call. Without a key
+    # that is Ollama, even before the first request has flipped the state.
+    if _active_backend == "groq" and not _groq_configured():
+        return "ollama"
     return _active_backend
 
 
 def active_model_label() -> str:
     """Human-readable label for the currently active LLM (used in /health)."""
-    if _active_backend == "groq":
+    if get_active_backend() == "groq":
         return f"Groq / {os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')}"
     model   = _ollama_model()
     profile = _detect_system()
@@ -161,6 +174,15 @@ def invoke_llm(messages: list) -> Any:
       - If both fail, raises RuntimeError with actionable instructions.
     """
     global _active_backend, _groq_failed_at, _groq_llm
+
+    # No key configured at all — Groq was never an option. Go straight to the
+    # local model instead of burning the retry/backoff budget on every call.
+    if not _groq_configured():
+        with _state_lock:
+            if _active_backend != "ollama":
+                logger.info("llm_router: no GROQ_API_KEY set — running offline on Ollama")
+                _active_backend = "ollama"
+        return _invoke_ollama(messages)
 
     # Auto-retry Groq after cooldown
     with _state_lock:
@@ -197,21 +219,32 @@ def invoke_llm(messages: list) -> Any:
             _groq_failed_at = time.time()
         # fall through to Ollama
 
-    # ── Ollama path ───────────────────────────────────────────────────────────
+    return _invoke_ollama(messages)
+
+
+def _invoke_ollama(messages: list) -> Any:
+    """Run the request on the local Ollama model, or explain why it cannot."""
+    global _active_backend, _groq_failed_at
+
     try:
         return _build_ollama().invoke(messages)
     except Exception as exc:
         # Ollama is unavailable too (common in cloud deploys). Don't stay pinned
         # to a dead backend for the whole cooldown — revert to Groq so the next
-        # call retries the cloud instead of failing fast for 30 minutes.
-        with _state_lock:
-            _active_backend = "groq"
-            _groq_failed_at = None
+        # call retries the cloud instead of failing fast for 30 minutes. With no
+        # key configured there is nothing to revert to, so stay on Ollama and
+        # keep /health honest.
+        if _groq_configured():
+            with _state_lock:
+                _active_backend = "groq"
+                _groq_failed_at = None
         model   = _ollama_model()
         profile = _detect_system()
+        groq_state = ("rate-limited / no internet" if _groq_configured()
+                      else "no GROQ_API_KEY configured")
         raise RuntimeError(
             f"Both Groq and Ollama are unavailable.\n"
-            f"Groq: rate-limited / no internet.\n"
+            f"Groq: {groq_state}.\n"
             f"Ollama error: {exc}\n\n"
             f"Detected system: {profile}\n\n"
             f"To enable offline mode:\n"
