@@ -77,6 +77,20 @@ class TestDetectCdn:
     def test_fastly_by_x_served_by(self):
         assert website_scanner.detect_cdn({"x-served-by": "cache-fastly-1"}) == "Fastly"
 
+    def test_github_pages_is_detected_as_fastly(self):
+        """GitHub Pages hides Fastly: Server says GitHub.com, Via says varnish,
+        and X-Served-By is an opaque cache id. Only the request-id header names it."""
+        headers = {
+            "server": "GitHub.com",
+            "via": "1.1 varnish",
+            "x-served-by": "cache-del-vibw2260028-DEL",
+            "x-fastly-request-id": "f5a9ca60f958e7376eaa1f70daabdf64bbdd37db",
+        }
+        assert website_scanner.detect_cdn(headers) == "Fastly"
+
+    def test_header_matching_is_case_insensitive(self):
+        assert website_scanner.detect_cdn({"CF-RAY": "abc"}) == "Cloudflare"
+
     def test_plain_origin_has_no_cdn(self):
         assert website_scanner.detect_cdn({"server": "nginx/1.24"}) is None
 

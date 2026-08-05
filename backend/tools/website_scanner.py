@@ -181,15 +181,34 @@ CDN_SERVER_MARKERS = {
 }
 
 
+# Header names that identify a CDN on their own, whatever their value. Fastly
+# is the reason this exists: it fronts GitHub Pages but its Server header says
+# "GitHub.com", its Via says "varnish", and its X-Served-By is an opaque cache
+# id, so no header *value* names the vendor.
+CDN_MARKER_HEADERS = {
+    "cf-ray":               "Cloudflare",
+    "x-fastly-request-id":  "Fastly",
+    "x-amz-cf-id":          "Amazon CloudFront",
+    "x-akamai-request-id":  "Akamai",
+    "x-vercel-id":          "Vercel",
+    "x-nf-request-id":      "Netlify",
+}
+
+
 def detect_cdn(headers: dict) -> str | None:
     """Identify a fronting CDN from response headers, if there is one."""
+    lowered = {k.lower(): v for k, v in headers.items()}
+
+    for header, name in CDN_MARKER_HEADERS.items():
+        if header in lowered:
+            return name
+
     blob = " ".join([
-        headers.get("server", ""),
-        headers.get("via", ""),
-        headers.get("x-served-by", ""),
+        lowered.get("server", ""),
+        lowered.get("via", ""),
+        lowered.get("x-served-by", ""),
+        lowered.get("x-cache", ""),
     ]).lower()
-    if "cf-ray" in headers:
-        return "Cloudflare"
     for marker, name in CDN_SERVER_MARKERS.items():
         if marker in blob:
             return name
