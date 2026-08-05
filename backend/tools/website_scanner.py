@@ -138,6 +138,92 @@ SECURITY_HEADERS = {
 
 _HEADERS = {"User-Agent": "SentinelAI-SecurityScanner/1.0"}
 
+# ── Anti-bot / WAF detection ──────────────────────────────────────────────────
+# A site that refuses automated requests serves a challenge or block page, and
+# that page has nothing to do with the real application's security posture. Its
+# headers are not the site's headers and its cookies are not the site's cookies,
+# so auditing it produces confident nonsense: LinkedIn returns HTTP 999 to
+# scanners, and grading that response reports "missing Content-Security-Policy"
+# against a site that ships one of the strictest CSPs on the web.
+#
+# Detect the block and refuse to report, rather than describing a challenge page.
+
+_BLOCK_STATUSES = {999, 429}
+
+# Header name -> vendor. Presence alone is conclusive.
+_BLOCK_HEADERS = {
+    "cf-mitigated":  "Cloudflare",
+    "x-datadome":    "DataDome",
+    "x-iinfo":       "Imperva Incapsula",
+    "x-sucuri-id":   "Sucuri",
+}
+
+# Body markers, only consulted on a status that plausibly indicates a block.
+_BLOCK_BODY_MARKERS = {
+    "just a moment":            "Cloudflare challenge page",
+    "attention required!":      "Cloudflare block page",
+    "checking your browser":    "Cloudflare interstitial",
+    "enable javascript and cookies to continue": "Cloudflare challenge page",
+    "px-captcha":               "PerimeterX challenge",
+    "request unsuccessful. incapsula": "Imperva Incapsula block",
+    "access denied":            "WAF block page",
+    "are you a robot":          "bot challenge",
+    "unusual traffic":          "rate-limit / bot challenge",
+}
+
+CDN_SERVER_MARKERS = {
+    "cloudflare": "Cloudflare",
+    "akamai":     "Akamai",
+    "cloudfront": "Amazon CloudFront",
+    "fastly":     "Fastly",
+    "vercel":     "Vercel",
+    "netlify":    "Netlify",
+}
+
+
+def detect_cdn(headers: dict) -> str | None:
+    """Identify a fronting CDN from response headers, if there is one."""
+    blob = " ".join([
+        headers.get("server", ""),
+        headers.get("via", ""),
+        headers.get("x-served-by", ""),
+    ]).lower()
+    if "cf-ray" in headers:
+        return "Cloudflare"
+    for marker, name in CDN_SERVER_MARKERS.items():
+        if marker in blob:
+            return name
+    return None
+
+
+def detect_block(resp) -> str | None:
+    """
+    Return a human-readable reason when the response is an anti-bot block,
+    or None when it looks like the real application.
+    """
+    hdrs = {k.lower(): v for k, v in resp.headers.items()}
+
+    if resp.status_code in _BLOCK_STATUSES:
+        return f"HTTP {resp.status_code} (automated requests refused)"
+
+    for header, vendor in _BLOCK_HEADERS.items():
+        if header in hdrs:
+            return f"{vendor} bot mitigation (via the {header} header)"
+
+    if resp.status_code in (401, 403, 503):
+        try:
+            body = resp.text[:8000].lower()
+        except Exception:
+            body = ""
+        for marker, label in _BLOCK_BODY_MARKERS.items():
+            if marker in body:
+                return f"{label} (HTTP {resp.status_code})"
+        cdn = detect_cdn(hdrs)
+        if cdn:
+            return f"HTTP {resp.status_code} served by {cdn}, not the origin"
+
+    return None
+
 
 def is_github_url(url: str) -> bool:
     host = (urllib.parse.urlparse(url).hostname or "").lower()
@@ -146,10 +232,19 @@ def is_github_url(url: str) -> bool:
     return host == "github.com"
 
 
-def scan_website(url: str) -> list[dict]:
+def scan_website(url: str, meta: dict | None = None) -> list[dict]:
+    """
+    Run passive HTTP security checks against a live site.
+
+    `meta`, when supplied, is populated with context about the target: the
+    fronting CDN, whether the target blocked the scan, and the final URL after
+    redirects. Callers use it to decide what is worth reporting.
+    """
     # Re-validate at scan time — blocks SSRF against internal hosts even if
     # the caller skipped the request-level check.
     url = assert_safe_target(url)
+    if meta is None:
+        meta = {}
 
     parsed = urllib.parse.urlparse(url)
     base_url = f"{parsed.scheme}://{parsed.netloc}"
@@ -176,6 +271,35 @@ def scan_website(url: str) -> list[dict]:
         return findings
 
     hdrs = {k.lower(): v for k, v in resp.headers.items()}
+
+    meta["final_url"] = getattr(resp, "url", url)
+    meta["status_code"] = resp.status_code
+    meta["cdn"] = detect_cdn(hdrs)
+
+    # ── 1b. Anti-bot block ──────────────────────────────────────────────────
+    # Everything below grades the response we received. If that response is a
+    # challenge page rather than the application, grading it is worse than
+    # useless: it produces confident findings about a page the site never
+    # serves to real users. Report the block itself and stop.
+    blocked = detect_block(resp)
+    if blocked:
+        meta["blocked"] = blocked
+        return [{
+            "type":        "scan_blocked",
+            "source":      "website",
+            "file":        url,
+            "line":        0,
+            "severity":    "LOW",
+            "category":    "scan-blocked",
+            "description": (
+                f"Target refused automated scanning: {blocked}. No security "
+                f"assessment was performed - the response received is a bot "
+                f"challenge, not the application, so its headers and cookies "
+                f"do not reflect the real security posture."
+            ),
+            "code": f"GET {url} -> HTTP {resp.status_code}",
+        }]
+    meta["blocked"] = None
 
     # ── 2. HTTP (no TLS) ────────────────────────────────────────────────────
     if parsed.scheme == "http":

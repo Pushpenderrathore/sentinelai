@@ -251,11 +251,47 @@ def _probe_port(host: str, port: int) -> tuple[int, bool, str]:
         return port, False, ""
 
 
-def scan_ports(host: str) -> list[dict]:
+# Ports a public website is expected to answer on. Reporting "443/HTTPS is
+# open" against an HTTPS site is reporting that the website exists.
+WEB_SERVICE_PORTS = frozenset({80, 443})
+
+# CDNs publish these as alternate HTTP/HTTPS ports on every domain they front,
+# so an open 8080/8443 behind a CDN says nothing about the origin.
+CDN_ALTERNATE_PORTS = frozenset({8080, 8443})
+
+
+def _cdn_alternate_risk(port: int, cdn: str) -> dict:
+    """Reword an alternate-port finding that the CDN fully explains."""
+    scheme = "HTTPS" if port == 8443 else "HTTP"
+    return {
+        "severity": "LOW",
+        "owasp": "A05:2021-Security Misconfiguration",
+        "cwes": ["CWE-16 Configuration"],
+        "cves": [],
+        "description": (
+            f"Port {port} answers, but {cdn} publishes it as a standard "
+            f"alternate {scheme} port on every domain it fronts. That is edge "
+            f"behaviour, not evidence of a service exposed on the origin."
+        ),
+        "recommendation": (
+            f"No action needed unless port {port} is also reachable directly on "
+            f"the origin. Verify the origin is not addressable outside {cdn}."
+        ),
+    }
+
+
+def scan_ports(host: str, skip_ports: "frozenset|set|tuple" = (),
+               cdn: str | None = None) -> list[dict]:
     """
     Scan COMMON_PORTS on `host` in parallel.
     Returns a list of finding dicts for each open port.
+
+    `skip_ports` suppresses ports whose exposure is the entire point of the
+    target, such as 443 on a website. `cdn`, when the target is CDN-fronted,
+    reclassifies the alternate ports that CDN publishes by default.
     """
+    skip_ports = frozenset(skip_ports)
+
     # Resolve hostname once
     try:
         ip = socket.gethostbyname(host)
@@ -268,18 +304,21 @@ def scan_ports(host: str) -> list[dict]:
         futures = {pool.submit(_probe_port, ip, port): port for port in COMMON_PORTS}
         for future in concurrent.futures.as_completed(futures):
             port, is_open, banner = future.result()
-            if not is_open:
+            if not is_open or port in skip_ports:
                 continue
 
             service = COMMON_PORTS[port]
-            risk = PORT_RISK_DB.get(port, {
-                "severity": "LOW",
-                "owasp": "A05:2021-Security Misconfiguration",
-                "cwes": ["CWE-16 Configuration"],
-                "cves": [],
-                "description": f"Port {port}/{service} is open and exposed to the internet.",
-                "recommendation": f"Audit whether port {port} needs to be publicly accessible.",
-            })
+            if cdn and port in CDN_ALTERNATE_PORTS:
+                risk = _cdn_alternate_risk(port, cdn)
+            else:
+                risk = PORT_RISK_DB.get(port, {
+                    "severity": "LOW",
+                    "owasp": "A05:2021-Security Misconfiguration",
+                    "cwes": ["CWE-16 Configuration"],
+                    "cves": [],
+                    "description": f"Port {port}/{service} is open and exposed to the internet.",
+                    "recommendation": f"Audit whether port {port} needs to be publicly accessible.",
+                })
 
             open_ports.append({
                 "type": "port_exposure",

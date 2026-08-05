@@ -264,7 +264,31 @@ def _scan_website(state: ScanState) -> dict:
             f"[Scanner] Mode: Live website",
             f"[Scanner] Checking security headers, SSL, exposed files, CORS, cookies…",
         ]
-        raw_findings = scan_website(state["repo_url"])
+        meta: dict = {}
+        raw_findings = scan_website(state["repo_url"], meta=meta)
+
+        # The target served a bot challenge instead of the application. Its
+        # headers and cookies are the challenge page's, so grading them would
+        # produce confident findings about a page real users never see. Stop
+        # here, and do not port scan a host that has just told us to go away.
+        if meta.get("blocked"):
+            logs.append(f"[Scanner] Target blocked automated scanning: {meta['blocked']}")
+            logs.append("[Scanner] No assessment performed - results would not "
+                        "reflect the real security posture")
+            return {
+                "repo_path": "",
+                "tech_stack": {"type": "website", "url": state["repo_url"],
+                               "cdn": meta.get("cdn"), "blocked": meta["blocked"]},
+                "raw_findings": [],
+                "errors": [f"Target blocked automated scanning: {meta['blocked']}. "
+                           f"Scan a target you control, or one that permits scanning."],
+                "status": "analyzing",
+                "agent_logs": logs,
+            }
+
+        if meta.get("cdn"):
+            logs.append(f"[Scanner] Fronted by {meta['cdn']} - findings describe the "
+                        f"edge, not necessarily the origin")
 
         by_sev: dict[str, int] = {}
         for f in raw_findings:
@@ -278,7 +302,11 @@ def _scan_website(state: ScanState) -> dict:
         host = urlparse(state["repo_url"]).hostname or state["repo_url"]
         from tools.port_scanner import COMMON_PORTS as _CP
         logs.append(f"[Scanner] Starting port scan on {host} ({len(_CP)} common ports)…")
-        port_findings = scan_ports(host)
+        # On an HTTPS site, 443 is the site itself and 80 exists to redirect to
+        # it. Both are the website working as intended, not exposures.
+        from tools.port_scanner import WEB_SERVICE_PORTS
+        skip = WEB_SERVICE_PORTS if urlparse(state["repo_url"]).scheme == "https" else frozenset()
+        port_findings = scan_ports(host, skip_ports=skip, cdn=meta.get("cdn"))
 
         open_ports = [p for p in port_findings if "port" in p]
         critical_ports = [p for p in open_ports if p["severity"] in ("CRITICAL", "HIGH")]
@@ -501,9 +529,30 @@ def fix_suggester_node(state: ScanState) -> dict:
             f"(raise MAX_PATCH_TARGETS to change)"
         )
 
-    for vuln in targets:
-        response = invoke_llm([
-            SystemMessage(content="""You are a secure code fix agent.
+    # A website scan never sees source code. Asking for a code patch anyway makes
+    # the model invent a codebase: scanning a site fronted by a CDN produced a
+    # Flask snippet "fixing" cookies for a company that does not run Flask. With
+    # no source to diff, the honest deliverable is configuration guidance.
+    is_website = state.get("tech_stack", {}).get("type") == "website"
+
+    if is_website:
+        system_prompt = """You are a web security remediation agent.
+You are advising on a LIVE WEBSITE. You have NOT seen its source code and you
+do not know its language, framework or server software.
+
+Never invent source code, file paths, or a framework. Give the concrete
+configuration directive that fixes the issue, for the common web servers.
+
+Return a single JSON object:
+{
+  "vuln_id": "VULN-001",
+  "file": "the affected URL",
+  "remediation": "the exact header or config directive to set",
+  "explanation": "what this fixes and where to apply it (web server, CDN or app config)"
+}
+Output only valid JSON. No markdown."""
+    else:
+        system_prompt = """You are a secure code fix agent.
 Generate a targeted code patch for the vulnerability provided.
 Return a single JSON object:
 {
@@ -513,11 +562,22 @@ Return a single JSON object:
   "patched_code": "the fixed snippet",
   "explanation": "what changed and why it fixes the vulnerability"
 }
-Output only valid JSON. No markdown."""),
+Output only valid JSON. No markdown."""
+
+    for vuln in targets:
+        response = invoke_llm([
+            SystemMessage(content=system_prompt),
             HumanMessage(content=f"Fix this vulnerability:\n{json.dumps(vuln, indent=2)}"),
         ])
 
         patch = _parse_json(response.content, None)
+        if isinstance(patch, dict) and is_website:
+            # Guarantee no fabricated diff reaches the report, whatever the
+            # model returned. The UI hides empty diff blocks.
+            patch.pop("original_code", None)
+            patch.pop("patched_code", None)
+            patch.setdefault("vuln_id", vuln.get("id", ""))
+            patch.setdefault("file", vuln.get("file", ""))
         if patch:
             patches.append(patch)
             logs.append(f"[FixSuggester] Patch ready for {vuln['id']} — {vuln['severity']}")
