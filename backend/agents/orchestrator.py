@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import uuid
 from typing import AsyncGenerator, Literal, Optional
 
@@ -31,21 +33,125 @@ logger = logging.getLogger(__name__)
 #  Helpers
 # ══════════════════════════════════════════════════════════════
 
+_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+
+
+def _balanced_slice(text: str, open_ch: str, close_ch: str) -> str | None:
+    """Return the first balanced open_ch..close_ch span, ignoring brackets that
+    appear inside JSON string literals."""
+    start = text.find(open_ch)
+    if start == -1:
+        return None
+    depth = 0
+    in_str = False
+    escaped = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return None
+
+
 def _parse_json(text: str, fallback: object) -> object:
-    """Strip markdown fences if present, then parse JSON."""
+    """
+    Parse JSON out of an LLM response.
+
+    Smaller local models routinely wrap the answer in prose ("Here are the
+    findings:") and/or markdown fences. Treating that as a parse failure
+    discarded the whole result, which in the vulnerability analyzer meant a repo
+    full of real findings was reported as clean. Try, in order: the raw text,
+    any fenced block, then the first balanced JSON array or object anywhere in
+    the response.
+    """
     cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        logger.warning("JSON parse failed, using fallback. Raw: %s", text[:200])
-        return fallback
+    candidates = [cleaned]
+    candidates += [m.group(1).strip() for m in _FENCE_RE.finditer(cleaned)]
+    for open_ch, close_ch in (("[", "]"), ("{", "}")):
+        span = _balanced_slice(cleaned, open_ch, close_ch)
+        if span:
+            candidates.append(span)
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+
+    logger.warning("JSON parse failed, using fallback. Raw: %s", text[:200])
+    return fallback
 
 
 def _log(msg: str) -> list[str]:
     logger.info(msg)
     return [msg]
+
+
+# Semgrep reports ERROR/WARNING/INFO; the rest of the pipeline speaks
+# CRITICAL/HIGH/MEDIUM/LOW.
+_SEMGREP_SEVERITY = {"ERROR": "HIGH", "WARNING": "MEDIUM", "INFO": "LOW"}
+_VALID_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+_SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+
+# Patch generation is one LLM call per vulnerability, so it is capped.
+_MAX_PATCH_TARGETS = int(os.getenv("MAX_PATCH_TARGETS", "10"))
+
+
+def _normalize_severity(finding: dict) -> str:
+    sev = (finding.get("severity") or "").upper()
+    if finding.get("source") == "semgrep":
+        sev = _SEMGREP_SEVERITY.get(sev, sev)
+    return sev if sev in _VALID_SEVERITIES else "MEDIUM"
+
+
+def _vulns_from_raw_findings(findings: list[dict]) -> list[dict]:
+    """
+    Map scanner output to structured vulnerabilities without the LLM.
+
+    Used when the model returns nothing usable. Semgrep and Bandit already
+    supply a file, line, severity and description, so a failed LLM call must
+    never turn real findings into a clean bill of health — it should only cost
+    the enrichment (CVE lookup, prose, patches), not the findings themselves.
+    """
+    from tools.owasp_data import OWASP_TOP_10, match_owasp_category
+
+    vulns = []
+    for i, f in enumerate(findings, start=1):
+        description = f.get("description", "") or ""
+        category = f.get("category")
+        if not category:
+            key = match_owasp_category(
+                f"{description} {f.get('rule_id', '')} {f.get('test_id', '')}"
+            )
+            category = (f"{key}-{OWASP_TOP_10[key]['name']}" if key
+                        else "A05:2021-Security Misconfiguration")
+        vulns.append({
+            "id": f"VULN-{i:03d}",
+            "file": f.get("file", ""),
+            "line": f.get("line", 0),
+            "severity": _normalize_severity(f),
+            "category": category,
+            "description": description,
+            "cve": None,
+            "source": f.get("source", "static-analysis"),
+            "rule": f.get("test_id") or f.get("rule_id") or "",
+        })
+    return vulns
 
 
 # ══════════════════════════════════════════════════════════════
@@ -263,6 +369,26 @@ Output only a valid JSON array. No markdown."""),
     ])
 
     llm_vulns = _parse_json(response.content, [])
+    # Models sometimes wrap the array in an object, e.g. {"vulnerabilities": [...]}
+    if isinstance(llm_vulns, dict):
+        llm_vulns = next(
+            (v for v in llm_vulns.values() if isinstance(v, list)), []
+        )
+    if not isinstance(llm_vulns, list):
+        llm_vulns = []
+
+    degraded = False
+    if not llm_vulns and other_findings:
+        # The scanners found real issues but the LLM gave us nothing usable.
+        # Report the raw findings rather than an inaccurate "no vulnerabilities".
+        llm_vulns = _vulns_from_raw_findings(other_findings)
+        degraded = True
+        logger.warning(
+            "vuln_analyzer: LLM returned no usable vulnerabilities for %d raw "
+            "findings — falling back to deterministic mapping",
+            len(other_findings),
+        )
+
     vulns = port_vulns + llm_vulns
 
     severity_counts: dict[str, int] = {}
@@ -279,6 +405,11 @@ Output only a valid JSON array. No markdown."""),
     ]
     if port_vulns:
         logs.append(f"[VulnAnalyzer] Port exposures: {len(port_vulns)} open ports mapped to CVEs/CWEs")
+    if degraded:
+        logs.append(
+            f"[VulnAnalyzer] LLM enrichment unavailable — reported "
+            f"{len(llm_vulns)} findings directly from Semgrep/Bandit"
+        )
 
     return {
         "vulnerabilities": vulns,
@@ -342,7 +473,7 @@ Output only a valid JSON array. Be specific and technical. No markdown."""),
 # ══════════════════════════════════════════════════════════════
 
 def fix_suggester_node(state: ScanState) -> dict:
-    """Generates code patches for CRITICAL, HIGH, and MEDIUM vulnerabilities."""
+    """Generates code patches for the most severe vulnerabilities."""
     targets = [v for v in state["vulnerabilities"] if v["severity"] in ("CRITICAL", "HIGH", "MEDIUM")]
 
     if not targets:
@@ -352,8 +483,23 @@ def fix_suggester_node(state: ScanState) -> dict:
             "agent_logs": ["[FixSuggester] Nothing to patch."],
         }
 
+    # This loop costs one LLM call per vulnerability. A repo with 40+ findings
+    # would otherwise mean 40 sequential calls: minutes of wall time on a local
+    # model, and enough requests to trip a free-tier cloud rate limit. Patch the
+    # most severe findings first and cap the rest.
+    total_targets = len(targets)
+    targets = sorted(
+        targets, key=lambda v: _SEVERITY_RANK.get(v.get("severity"), 99)
+    )[:_MAX_PATCH_TARGETS]
+
     patches = []
     logs = []
+    if total_targets > len(targets):
+        logs.append(
+            f"[FixSuggester] {total_targets} patchable findings — generating "
+            f"patches for the {len(targets)} most severe "
+            f"(raise MAX_PATCH_TARGETS to change)"
+        )
 
     for vuln in targets:
         response = invoke_llm([
