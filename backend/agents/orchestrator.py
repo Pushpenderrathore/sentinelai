@@ -414,9 +414,10 @@ def read_source_window(repo_path: str, rel_file: str, line: int,
     Return (numbered context, the exact flagged line) from the cloned repo.
 
     The fix suggester used to receive only a finding's metadata, so it invented
-    the code it claimed to be patching: for frontend/lib/ws.ts:14 it produced
-    "ws = new WebSocket('ws://example.com/path')", a line that is not in the
-    file. The repository is already on disk, so the real line can just be read.
+    the code it claimed to be patching: for frontend/lib/ws.ts:14 it produced a
+    plausible WebSocket constructor call against an example.com URL, a line
+    that does not appear anywhere in that file. The repository is already on
+    disk, so the real line can just be read.
 
     Returns None when there is nothing trustworthy to show, in which case the
     caller must not claim to know the original code.
