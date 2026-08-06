@@ -179,6 +179,20 @@ class TestMetaDeliveredHeaders:
         assert len(notes) == 1
         assert notes[0]["severity"] == "LOW"
 
+    def test_the_note_cannot_be_read_as_a_missing_csp(self, monkeypatch):
+        """
+        The report summariser inverted the earlier wording into "Implement
+        Content-Security-Policy" on a site that already had one. The finding
+        must say the policy is present before it says what it cannot do.
+        """
+        findings = self._scan(monkeypatch, self.CSP_PAGE, {"server": "GitHub.com"})
+        note = next(f for f in findings if "frame-ancestors" in f["description"])
+        description = note["description"].lower()
+        assert "is present and enforced" in description
+        assert description.index("present") < description.index("inactive")
+        assert "missing" not in description
+        assert "no csp needs to be written" in note["code"].lower()
+
     def test_a_meta_tag_does_not_satisfy_x_frame_options(self, monkeypatch):
         """X-Frame-Options in a meta tag is ignored by browsers, so it stays missing."""
         html = ('<meta http-equiv="X-Frame-Options" content="DENY">'

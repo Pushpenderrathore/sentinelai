@@ -385,14 +385,21 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
         if header in META_DELIVERABLE_HEADERS and key in from_meta:
             # Applied, just not via a response header.
             if header == "Content-Security-Policy":
+                # Worded so it cannot be read as "no CSP". The earlier phrasing
+                # led with the shortcoming, and the report summariser inverted
+                # it into "Implement Content-Security-Policy" on a site that
+                # already had one. State what is in place first, then the gap.
                 findings.append(_f(
                     url, "LOW", "A05:2021-Security Misconfiguration",
-                    "Content-Security-Policy is delivered by meta tag, so "
-                    "frame-ancestors and reporting are ignored",
-                    "A meta-delivered CSP is enforced by the browser, but "
-                    "frame-ancestors, report-uri, report-to and sandbox only "
-                    "work as a response header. Clickjacking protection still "
-                    "needs X-Frame-Options or a header-delivered CSP.",
+                    "Content-Security-Policy is present and enforced, but "
+                    "delivered by meta tag: its frame-ancestors and reporting "
+                    "directives are inactive",
+                    "The page ships a CSP via <meta http-equiv> and the browser "
+                    "enforces it, so no CSP needs to be written. However "
+                    "frame-ancestors, report-uri, report-to and sandbox are "
+                    "only honoured in a response header. Clickjacking "
+                    "protection therefore still needs X-Frame-Options or the "
+                    "same CSP sent as a header.",
                 ))
             continue
         findings.append(_f(url, sev, cat,
