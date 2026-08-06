@@ -322,6 +322,41 @@ class TestWebsiteSeverityIsNotTheModelsToChange:
         assert vulns[0]["cve"] == "CVE-2021-1234"
         assert vulns[0]["severity"] == "MEDIUM"
 
+    def test_short_form_ids_still_match(self, monkeypatch):
+        """Observed on a repo scan: the model numbers VULN-1, the baseline VULN-001."""
+        reply = ('[{"id": "VULN-2", "category": "A01:2021-Broken Access Control", '
+                 '"description": "Missing security header: Permissions-Policy"}]')
+        vulns = self._run(monkeypatch, reply)["vulnerabilities"]
+        assert vulns[1]["category"] == "A01:2021-Broken Access Control"
+
+    def test_a_vaguer_category_does_not_replace_the_owasp_label(self, monkeypatch):
+        """The model answered "Security"; match_owasp_category() already did better."""
+        reply = ('[{"id": "VULN-001", "category": "Security", '
+                 '"description": "Missing security header: X-Frame-Options"}]')
+        vulns = self._run(monkeypatch, reply)["vulnerabilities"]
+        assert vulns[0]["category"] == "A05:2021-Security Misconfiguration"
+
+    def test_spaced_owasp_labels_are_canonicalised(self, monkeypatch):
+        """Otherwise the report lists A05:2021 twice, once with a trailing space."""
+        reply = ('[{"id": "VULN-001", "category": "A05:2021 - Security Misconfiguration", '
+                 '"description": "Missing security header: X-Frame-Options"}]')
+        result = self._run(monkeypatch, reply)
+        assert result["vulnerabilities"][0]["category"] == "A05:2021-Security Misconfiguration"
+        cats = next(l for l in result["agent_logs"] if "OWASP categories" in l)
+        assert cats.count("A05:2021") == 1
+
+    def test_a_single_object_is_treated_as_a_one_item_array(self, monkeypatch):
+        """
+        A repo scan returned one bare object instead of an array, and the whole
+        enrichment was discarded because only {"key": [...]} was unwrapped.
+        """
+        reply = ('{"id": "VULN-001", "category": "A03:2021-Injection", '
+                 '"description": "Missing security header: X-Frame-Options"}')
+        result = self._run(monkeypatch, reply)
+        assert result["vulnerabilities"][0]["category"] == "A03:2021-Injection"
+        assert not any("LLM enrichment unavailable" in line
+                       for line in result["agent_logs"])
+
     def test_a_hallucinated_extra_finding_is_ignored(self, monkeypatch):
         reply = ('[{"id": "VULN-001", "severity": "MEDIUM", "description": "Missing security header: X-Frame-Options"},'
                  ' {"id": "VULN-099", "severity": "CRITICAL", "description": "Remote code execution in the login form"}]')

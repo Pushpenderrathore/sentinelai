@@ -138,6 +138,10 @@ _SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 # Patch generation is one LLM call per vulnerability, so it is capped.
 _MAX_PATCH_TARGETS = int(os.getenv("MAX_PATCH_TARGETS", "10"))
 
+# How many findings fit in one enrichment prompt. The rest are still reported,
+# with the scanner's own severity and description.
+_MAX_ENRICHED_FINDINGS = int(os.getenv("MAX_ENRICHED_FINDINGS", "25"))
+
 # ── Risk scoring ──────────────────────────────────────────────
 # The risk score used to be whatever number the model wrote, and it did not
 # survive comparison between scans: 12 findings (1 HIGH, 5 MEDIUM, 6 LOW)
@@ -243,9 +247,21 @@ def _norm(text: str) -> str:
     return " ".join((text or "").lower().split())
 
 
+def _id_key(value: object) -> str:
+    """VULN-1, VULN-001 and "1" are the same finding as far as matching goes."""
+    digits = re.sub(r"\D", "", str(value or ""))
+    return digits.lstrip("0")
+
+
+# An OWASP label, which is what the category field is for. A model that answers
+# "Security" or "Misconfiguration" is less specific than the deterministic
+# match_owasp_category() lookup the baseline already did, so it is not an upgrade.
+_OWASP_LABEL_RE = re.compile(r"^A\d{2}:\d{4}")
+
+
 def _match_llm_entry(vuln: dict, by_id: dict, by_desc: dict, by_loc: dict) -> dict | None:
     """Find the model's version of a finding we already know about."""
-    entry = by_id.get(vuln["id"])
+    entry = by_id.get(_id_key(vuln["id"]))
     if entry is not None:
         return entry
 
@@ -263,7 +279,8 @@ def _match_llm_entry(vuln: dict, by_id: dict, by_desc: dict, by_loc: dict) -> di
     return None
 
 
-def _merge_llm_enrichment(baseline: list[dict], llm_vulns: list[dict]) -> tuple[list[dict], dict]:
+def _merge_llm_enrichment(baseline: list[dict], llm_vulns: list[dict],
+                          enrichable: int | None = None) -> tuple[list[dict], dict]:
     """
     Enrich the scanner's findings with the model's analysis, without letting it
     change what was found.
@@ -281,27 +298,37 @@ def _merge_llm_enrichment(baseline: list[dict], llm_vulns: list[dict]) -> tuple[
     for entry in llm_vulns:
         if not isinstance(entry, dict):
             continue
-        if entry.get("id"):
-            by_id.setdefault(str(entry["id"]), entry)
+        if _id_key(entry.get("id")):
+            by_id.setdefault(_id_key(entry["id"]), entry)
         by_desc.setdefault(_norm(entry.get("description", "")), entry)
         by_loc.setdefault((str(entry.get("file", "")), entry.get("line", 0)), entry)
 
-    stats = {"enriched": 0, "dropped_by_llm": 0, "severity_kept": 0}
+    # Findings past this index were never sent to the model, so their absence
+    # from its reply says nothing about it.
+    limit = len(baseline) if enrichable is None else enrichable
+
+    stats = {"enriched": 0, "dropped_by_llm": 0, "severity_kept": 0,
+             "not_sent": max(0, len(baseline) - limit)}
     merged = []
 
-    for vuln in baseline:
+    for index, vuln in enumerate(baseline):
         entry = _match_llm_entry(vuln, by_id, by_desc, by_loc)
         result = dict(vuln)
 
         if entry is None:
-            stats["dropped_by_llm"] += 1
+            if index < limit:
+                stats["dropped_by_llm"] += 1
             merged.append(result)
             continue
 
         stats["enriched"] += 1
         category = entry.get("category")
-        if isinstance(category, str) and category.strip():
-            result["category"] = category.strip()
+        if isinstance(category, str) and _OWASP_LABEL_RE.match(category.strip()):
+            # "A05:2021 - Security Misconfiguration" and "A05:2021-Security
+            # Misconfiguration" are the same category; left as written they show
+            # up as two entries in the report's category list.
+            result["category"] = re.sub(r"^(A\d{2}:\d{4})\s*[-–—]\s*", r"\1-",
+                                        category.strip())
         cve = entry.get("cve")
         if isinstance(cve, str) and cve.strip().upper().startswith("CVE-"):
             result["cve"] = cve.strip()
@@ -661,9 +688,14 @@ def vuln_analyzer_node(state: ScanState) -> dict:
                 "recommendation": f.get("recommendation", ""),
             })
 
-    # Static analysis / HTTP findings go through the LLM
+    # Static analysis / HTTP findings go through the LLM. Only the first slice
+    # fits the token budget — a scan of this repo produces 231 findings — but
+    # the ones beyond it are still reported, just without enrichment. They were
+    # never shown to the model, so they must not be counted as findings it
+    # dropped.
     other_findings = [f for f in state["raw_findings"] if f.get("type") != "port_exposure"]
-    findings_json = json.dumps(other_findings[:25], indent=2)  # cap for token budget
+    sent_to_llm = other_findings[:_MAX_ENRICHED_FINDINGS]
+    findings_json = json.dumps(sent_to_llm, indent=2)
     owasp_ref = get_owasp_context()
 
     response = invoke_llm([
@@ -690,11 +722,17 @@ Output only a valid JSON array. No markdown."""),
     ])
 
     llm_vulns = _parse_json(response.content, [])
-    # Models sometimes wrap the array in an object, e.g. {"vulnerabilities": [...]}
     if isinstance(llm_vulns, dict):
-        llm_vulns = next(
-            (v for v in llm_vulns.values() if isinstance(v, list)), []
-        )
+        # Either the array wrapped in an object, e.g. {"vulnerabilities": [...]},
+        # or a single finding returned bare instead of in an array — which is
+        # what a repo scan actually produced, and it cost the whole enrichment.
+        nested = next((v for v in llm_vulns.values() if isinstance(v, list)), None)
+        if nested is not None:
+            llm_vulns = nested
+        elif any(k in llm_vulns for k in ("id", "description", "severity")):
+            llm_vulns = [llm_vulns]
+        else:
+            llm_vulns = []
     if not isinstance(llm_vulns, list):
         llm_vulns = []
 
@@ -702,9 +740,11 @@ Output only a valid JSON array. No markdown."""),
     # not get to decide what was found. Previously its array *was* the result,
     # so a finding it forgot to copy simply vanished from the report.
     baseline = _vulns_from_raw_findings(other_findings)
-    analyzed, merge_stats = _merge_llm_enrichment(baseline, llm_vulns)
+    analyzed, merge_stats = _merge_llm_enrichment(
+        baseline, llm_vulns, enrichable=len(sent_to_llm)
+    )
 
-    degraded = bool(other_findings) and merge_stats["enriched"] == 0
+    degraded = bool(sent_to_llm) and merge_stats["enriched"] == 0
     if degraded:
         logger.warning(
             "vuln_analyzer: LLM returned no usable vulnerabilities for %d raw "
@@ -719,7 +759,8 @@ Output only a valid JSON array. No markdown."""),
         sev = v.get("severity", "UNKNOWN")
         severity_counts[sev] = severity_counts.get(sev, 0) + 1
 
-    owasp_cats = list({v.get("category", "").split("-")[0] for v in vulns if v.get("category")})
+    owasp_cats = list({v.get("category", "").split("-")[0].strip()
+                       for v in vulns if v.get("category")})
 
     logs = [
         f"[VulnAnalyzer] Mapped {len(vulns)} structured vulnerabilities",
@@ -733,10 +774,18 @@ Output only a valid JSON array. No markdown."""),
             f"[VulnAnalyzer] {merge_stats['severity_kept']} findings kept the "
             f"scanner's severity (deterministic checks, not model judgement)"
         )
-    if merge_stats["dropped_by_llm"]:
+    if merge_stats["dropped_by_llm"] and not degraded:
+        # When nothing was enriched the "LLM enrichment unavailable" line below
+        # says it better; both together read as two separate failures.
         logs.append(
             f"[VulnAnalyzer] {merge_stats['dropped_by_llm']} findings were "
             f"missing from the model's output and were kept anyway"
+        )
+    if merge_stats["not_sent"]:
+        logs.append(
+            f"[VulnAnalyzer] {merge_stats['not_sent']} findings beyond the "
+            f"{_MAX_ENRICHED_FINDINGS}-finding enrichment budget are reported "
+            f"with the scanner's own severity (raise MAX_ENRICHED_FINDINGS to change)"
         )
     if degraded:
         logs.append(
