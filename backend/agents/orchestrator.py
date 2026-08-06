@@ -698,6 +698,30 @@ def _scan_website(state: ScanState) -> dict:
                 "agent_logs": logs,
             }
 
+        # No response at all: there is nothing to grade, and a host that does
+        # not answer must not be scored as though it had failed a check.
+        if meta.get("unreachable"):
+            logs.append(f"[Scanner] Target unreachable: {meta['unreachable']}")
+            logs.append("[Scanner] No assessment performed")
+            return {
+                "repo_path": "",
+                "tech_stack": {"type": "website", "url": state["repo_url"]},
+                "raw_findings": [],
+                "errors": [f"Could not reach {state['repo_url']}: {meta['unreachable']}"],
+                "status": "analyzing",
+                "agent_logs": logs,
+            }
+
+        # Findings describe the response that came back, which after a redirect
+        # is a different URL. Say so, rather than labelling them with the URL
+        # that was typed in.
+        if meta.get("redirected"):
+            logs.append(
+                f"[Scanner] Redirected to {meta['final_url']}"
+                + (" - a different host, so the findings describe that host"
+                   if meta.get("host_changed") else "")
+            )
+
         if meta.get("cdn"):
             logs.append(f"[Scanner] Fronted by {meta['cdn']} - findings describe the "
                         f"edge, not necessarily the origin")

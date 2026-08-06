@@ -251,11 +251,23 @@ STATIC_HOSTS_WITHOUT_HEADER_CONTROL = {
 }
 
 
-def detect_static_host(headers: dict) -> str | None:
+# github.com serves its own application with "Server: github.com" too, so the
+# header alone would label GitHub itself a static host that cannot set headers,
+# which it plainly is not: it ships a CSP, HSTS and the rest.
+_GITHUB_APP_HOSTS = frozenset({
+    "github.com", "www.github.com", "gist.github.com", "api.github.com",
+    "raw.githubusercontent.com", "codeload.github.com",
+})
+
+
+def detect_static_host(headers: dict, host: str = "") -> str | None:
     """Identify a static host that cannot set response headers, if any."""
     server = headers.get("server", "").strip().lower()
+    hostname = (host or "").strip().lower()
     for marker, name in STATIC_HOSTS_WITHOUT_HEADER_CONTROL.items():
         if server == marker or server.startswith(marker):
+            if marker == "github.com" and hostname in _GITHUB_APP_HOSTS:
+                return None
             return name
     return None
 
@@ -309,6 +321,36 @@ def detect_block(resp) -> str | None:
     return None
 
 
+_VERSION_RE = re.compile(r"\d+\.\d+|/\d+")
+
+
+def _unreachable(url: str, error: Exception, meta: dict, findings: list[dict]) -> list[dict]:
+    """
+    A site that does not answer is not a vulnerable site.
+
+    This used to be reported as a HIGH finding, which put an unreachable host
+    at 40/100 MEDIUM through the severity floor and listed "Could not reach
+    website" among its vulnerabilities. A scan that could not run has no
+    result, so it is surfaced the same way a bot block is: as a notice that
+    says no assessment was made.
+    """
+    meta["unreachable"] = str(error)
+    logger.info("website_scanner: %s is unreachable: %s", url, error)
+    return findings + [{
+        "type":        "scan_error",
+        "source":      "website",
+        "file":        url,
+        "line":        0,
+        "severity":    "LOW",
+        "category":    "scan-error",
+        "description": (
+            f"Could not reach {url}, so no security assessment was performed. "
+            f"This is a connectivity result, not a finding about the site."
+        ),
+        "code": f"GET {url} failed: {error}",
+    }]
+
+
 def is_github_url(url: str) -> bool:
     host = (urllib.parse.urlparse(url).hostname or "").lower()
     if host.startswith("www."):
@@ -346,20 +388,31 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
         try:
             resp = http.get(url, timeout=15, allow_redirects=True, verify=False)
         except RequestException as e:
-            findings.append(_f(url, "HIGH", "connectivity",
-                              f"Could not reach website: {e}", ""))
-            return findings
+            # The invalid-certificate finding above is real and stays.
+            return _unreachable(url, e, meta, findings)
     except RequestException as e:
-        findings.append(_f(url, "HIGH", "connectivity",
-                          f"Could not reach website: {e}", ""))
-        return findings
+        return _unreachable(url, e, meta, findings)
 
     hdrs = {k.lower(): v for k, v in resp.headers.items()}
 
-    meta["final_url"] = getattr(resp, "url", url)
+    # Everything below grades the response that actually came back, which after
+    # a redirect is a different URL and possibly a different host. Scanning
+    # http://github.com/ used to report HIGH "served over plain HTTP" because
+    # the scheme was read from the URL typed in, not the https:// page the
+    # server redirected to, and the file probes were aimed at the original host
+    # while the headers being graded came from the new one.
+    final_url = getattr(resp, "url", url) or url
+    final = urllib.parse.urlparse(final_url)
+    scheme = final.scheme or parsed.scheme
+    base_url = f"{final.scheme}://{final.netloc}"
+    url = final_url
+
+    meta["final_url"] = final_url
+    meta["redirected"] = bool(getattr(resp, "history", None))
+    meta["host_changed"] = (final.hostname or "") != (parsed.hostname or "")
     meta["status_code"] = resp.status_code
     meta["cdn"] = detect_cdn(hdrs)
-    meta["static_host"] = detect_static_host(hdrs)
+    meta["static_host"] = detect_static_host(hdrs, final.hostname or "")
 
     # ── 1b. Anti-bot block ──────────────────────────────────────────────────
     # Everything below grades the response we received. If that response is a
@@ -387,10 +440,21 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
     meta["blocked"] = None
 
     # ── 2. HTTP (no TLS) ────────────────────────────────────────────────────
-    if parsed.scheme == "http":
+    # Judged on where the request ended up. A site that answers on port 80 and
+    # immediately redirects to HTTPS is doing the right thing, and calling that
+    # "all traffic is unencrypted" is simply wrong.
+    if scheme == "http":
         findings.append(_f(url, "HIGH", "A02:2021-Cryptographic Failures",
                           "Site served over plain HTTP — all traffic is unencrypted",
-                          f"URL scheme: {parsed.scheme}"))
+                          f"GET {url} stayed on http:// with no redirect to https://"))
+    elif parsed.scheme == "http":
+        findings.append(_f(url, "LOW", "A02:2021-Cryptographic Failures",
+                          "Plain HTTP requests are redirected to HTTPS",
+                          f"GET {parsed.geturl()} redirected to {final_url}. The "
+                          f"redirect itself travels unencrypted, so a "
+                          f"Strict-Transport-Security header (and ideally HSTS "
+                          f"preloading) is what stops the first request being "
+                          f"intercepted."))
 
     # ── 3. Missing security headers ─────────────────────────────────────────
     # A policy declared in the document counts as applied, because the browser
@@ -420,6 +484,31 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
         key = header.lower()
         if key in hdrs:
             continue
+
+        # HSTS is only meaningful over TLS: browsers ignore it on a plain HTTP
+        # response. Reporting it missing there restates the "served over plain
+        # HTTP" finding above and scores the same problem twice.
+        if header == "Strict-Transport-Security" and scheme != "https":
+            continue
+
+        # A report-only policy is not "no policy": the site has one written and
+        # is collecting violations. It still enforces nothing, so the severity
+        # stands, but calling it missing is wrong in front of anyone who knows
+        # their own configuration.
+        if header == "Content-Security-Policy" and "content-security-policy-report-only" in hdrs:
+            findings.append(_f(
+                url, sev, cat,
+                "Content-Security-Policy is set to report-only, so no policy "
+                "is enforced",
+                "The response carries Content-Security-Policy-Report-Only but "
+                "no Content-Security-Policy. Violations are reported and "
+                "nothing is blocked, so the page has the same exposure to "
+                "injected script as a page with no policy. Serve the same "
+                "policy under Content-Security-Policy once the reports are "
+                "clean.",
+            ))
+            continue
+
         if header in META_DELIVERABLE_HEADERS and key in from_meta:
             # Applied, just not via a response header.
             if header == "Content-Security-Policy":
@@ -444,20 +533,42 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
         # is not what is stopping them: saying "GitHub Pages cannot set response
         # headers" against a missing CSP would point at the wrong remediation.
         platform_blocked = header not in META_DELIVERABLE_HEADERS
+        # A domain can be on the browser HSTS preload list, in which case
+        # browsers force HTTPS whether or not the header is sent. That is not
+        # visible in a response, so the finding has to say so rather than imply
+        # the site has no HTTPS enforcement at all.
+        caveat = (
+            " Note that the domain may also be on the browser HSTS preload "
+            "list, which enforces HTTPS regardless of this header and cannot "
+            "be seen in a response. Check hstspreload.org before treating this "
+            "as unprotected."
+            if header == "Strict-Transport-Security" else ""
+        )
         findings.append(_f(
             url, sev, cat,
             f"Missing security header: {header}"
             f"{host_note if platform_blocked else ''}",
             f"HTTP response has no {header} header."
-            f"{host_evidence if platform_blocked else ''}",
+            f"{host_evidence if platform_blocked else ''}{caveat}",
         ))
 
     # ── 4. Server / technology info disclosure ──────────────────────────────
+    # Only a version is worth reporting. Every site on the internet sends a
+    # Server header, so flagging "cloudflare", "gws" or "nginx" produced a
+    # finding on every single scan while telling an attacker nothing they could
+    # act on: there is no exploit for knowing the name of a web server. A
+    # version number is different, because it maps to a CVE list.
     for h in ("server", "x-powered-by", "x-aspnet-version", "x-aspnetmvc-version"):
-        if h in hdrs:
-            findings.append(_f(url, "LOW", "A05:2021-Security Misconfiguration",
-                              f"Server information disclosed via '{h}': {hdrs[h]}",
-                              f"{h}: {hdrs[h]}"))
+        value = hdrs.get(h, "")
+        if not value:
+            continue
+        if h == "server" and not _VERSION_RE.search(value):
+            continue
+        findings.append(_f(url, "LOW", "A05:2021-Security Misconfiguration",
+                          f"Server information disclosed via '{h}': {value}",
+                          f"{h}: {value}. A version number narrows the search "
+                          f"for a known vulnerability in that exact build. "
+                          f"Suppress or genericise the header."))
 
     # ── 5. HSTS strength ────────────────────────────────────────────────────
     hsts = hdrs.get("strict-transport-security", "")
@@ -532,18 +643,29 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
                               f"Allow: {allow}"))
 
     # ── 8. Cookie security flags ────────────────────────────────────────────
+    # Graded per attribute rather than lumping them together at MEDIUM. A
+    # cookie sent without Secure on an HTTPS site can leak over a plain-HTTP
+    # request; a cookie without SameSite is defaulted to Lax by every current
+    # browser, which is a much smaller problem and does not deserve equal
+    # billing in the score.
     for cookie in resp.cookies:
-        issues = []
-        if not cookie.secure:
-            issues.append("missing Secure flag")
-        if "httponly" not in [a.lower() for a in (cookie._rest or {})]:
-            issues.append("missing HttpOnly flag")
-        if "samesite" not in [a.lower() for a in (cookie._rest or {})]:
-            issues.append("missing SameSite attribute")
-        if issues:
-            findings.append(_f(url, "MEDIUM", "A05:2021-Security Misconfiguration",
-                              f"Insecure cookie '{cookie.name}': {', '.join(issues)}",
-                              f"Set-Cookie: {cookie.name}=..."))
+        attributes = {a.lower() for a in (getattr(cookie, "_rest", None) or {})}
+        issues: list[tuple[str, str]] = []
+        if not cookie.secure and scheme == "https":
+            issues.append(("MEDIUM", "missing Secure flag"))
+        if "httponly" not in attributes:
+            issues.append(("MEDIUM", "missing HttpOnly flag, so scripts can read it"))
+        if "samesite" not in attributes:
+            issues.append(("LOW", "no explicit SameSite (browsers default to Lax)"))
+        if not issues:
+            continue
+        severity = "MEDIUM" if any(s == "MEDIUM" for s, _ in issues) else "LOW"
+        findings.append(_f(
+            url, severity, "A05:2021-Security Misconfiguration",
+            f"Cookie '{cookie.name}': {', '.join(text for _, text in issues)}",
+            f"Set-Cookie: {cookie.name}=... "
+            f"(Secure={cookie.secure}, attributes={sorted(attributes) or 'none'})",
+        ))
 
     # ── 9. Sensitive file exposure ───────────────────────────────────────────
     # Baseline: many sites return 200 + HTML for any path (soft-404 / catch-all).

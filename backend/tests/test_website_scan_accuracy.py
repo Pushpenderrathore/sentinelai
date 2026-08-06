@@ -635,6 +635,227 @@ class TestStaticHostRemediationIsNotAskedOfTheModel:
                    for line in result["agent_logs"])
 
 
+# ── Findings must describe the response that came back ───────────────────────
+
+class TestRedirectsAreGradedAtTheDestination:
+    """
+    Scanning http://github.com/ reported HIGH "served over plain HTTP, all
+    traffic is unencrypted" against a site that 301s to HTTPS immediately: the
+    scheme was read from the URL typed in rather than the page actually served.
+    The file probes were aimed at the original host too, while the headers
+    being graded came from the new one.
+    """
+
+    def _scan(self, monkeypatch, requested, final, headers=None, history=True):
+        monkeypatch.setattr(website_scanner, "assert_safe_target", lambda u: u)
+        seen = []
+
+        class _Session:
+            headers = {}
+
+            def get(self, url, **k):
+                seen.append(url)
+                if url == requested or url == final:
+                    r = _Resp(200, headers or {}, "<html></html>", url=final)
+                    r.history = [_Resp(301, {}, "")] if history else []
+                    return r
+                return _Resp(404, {}, "", url=url)
+
+        monkeypatch.setattr(website_scanner.requests, "Session", lambda: _Session())
+        meta = {}
+        return website_scanner.scan_website(requested, meta), meta, seen
+
+    def test_http_to_https_redirect_is_not_unencrypted(self, monkeypatch):
+        findings, _, _ = self._scan(
+            monkeypatch, "http://example.com/", "https://example.com/")
+        assert not any("all traffic is unencrypted" in f["description"]
+                       for f in findings)
+
+    def test_the_redirect_itself_is_noted_as_low(self, monkeypatch):
+        findings, _, _ = self._scan(
+            monkeypatch, "http://example.com/", "https://example.com/")
+        note = next(f for f in findings if "redirected to HTTPS" in f["description"])
+        assert note["severity"] == "LOW"
+
+    def test_a_site_that_stays_on_http_is_still_high(self, monkeypatch):
+        findings, _, _ = self._scan(
+            monkeypatch, "http://example.com/", "http://example.com/", history=False)
+        high = next(f for f in findings if "unencrypted" in f["description"])
+        assert high["severity"] == "HIGH"
+
+    def test_probes_follow_the_final_host(self, monkeypatch):
+        _, _, seen = self._scan(
+            monkeypatch, "https://example.com/", "https://www.example.com/")
+        probes = [u for u in seen if u != "https://example.com/"]
+        assert probes, "expected sensitive-path probes"
+        assert all("www.example.com" in u for u in probes)
+
+    def test_a_host_change_is_recorded(self, monkeypatch):
+        _, meta, _ = self._scan(
+            monkeypatch, "https://example.com/", "https://www.example.com/")
+        assert meta["host_changed"] is True
+        assert meta["final_url"] == "https://www.example.com/"
+
+    def test_findings_are_labelled_with_the_final_url(self, monkeypatch):
+        findings, _, _ = self._scan(
+            monkeypatch, "https://example.com/", "https://www.example.com/")
+        headers = [f for f in findings if "Missing security header" in f["description"]]
+        assert headers and all(f["file"] == "https://www.example.com/" for f in headers)
+
+
+# ── Report-only CSP, HSTS on HTTP, server versions, cookies ──────────────────
+
+class TestHeaderGradingNuance:
+    def _scan(self, monkeypatch, headers, scheme="https"):
+        monkeypatch.setattr(website_scanner, "assert_safe_target", lambda u: u)
+        url = f"{scheme}://example.com/"
+
+        class _Session:
+            headers = {}
+
+            def get(self, u, **k):
+                if u == url:
+                    return _Resp(200, headers, "<html></html>", url=url)
+                return _Resp(404, {}, "", url=u)
+
+        monkeypatch.setattr(website_scanner.requests, "Session", lambda: _Session())
+        return website_scanner.scan_website(url)
+
+    def test_report_only_csp_is_not_called_missing(self, monkeypatch):
+        """Google ships a full report-only policy; "missing CSP" reads as wrong."""
+        findings = self._scan(monkeypatch, {
+            "content-security-policy-report-only": "default-src 'self'"})
+        assert not any("Missing security header: Content-Security-Policy" in f["description"]
+                       for f in findings)
+        note = next(f for f in findings if "report-only" in f["description"])
+        assert note["severity"] == "HIGH", "nothing is enforced, so the risk stands"
+        assert "same exposure" in note["code"]
+
+    def test_an_enforcing_csp_still_wins(self, monkeypatch):
+        findings = self._scan(monkeypatch, {
+            "content-security-policy": "default-src 'self'",
+            "content-security-policy-report-only": "default-src 'self'"})
+        assert not any("Content-Security-Policy" in f["description"] for f in findings)
+
+    def test_hsts_is_not_reported_on_a_plain_http_site(self, monkeypatch):
+        """Browsers ignore HSTS over HTTP, so it double-counts the HTTP finding."""
+        findings = self._scan(monkeypatch, {}, scheme="http")
+        assert not any("Strict-Transport-Security" in f["description"] for f in findings)
+
+    def test_hsts_finding_mentions_preloading(self, monkeypatch):
+        findings = self._scan(monkeypatch, {})
+        hsts = next(f for f in findings if "Strict-Transport-Security" in f["description"])
+        assert "preload" in hsts["code"].lower()
+
+    def test_a_server_header_without_a_version_is_not_a_finding(self, monkeypatch):
+        """Every site sends one; "cloudflare" tells an attacker nothing."""
+        findings = self._scan(monkeypatch, {"server": "cloudflare"})
+        assert not any("Server information disclosed" in f["description"] for f in findings)
+
+    def test_a_server_version_is_still_reported(self, monkeypatch):
+        findings = self._scan(monkeypatch, {"server": "nginx/1.18.0"})
+        assert any("nginx/1.18.0" in f["description"] for f in findings)
+
+    def test_x_powered_by_is_always_reported(self, monkeypatch):
+        findings = self._scan(monkeypatch, {"x-powered-by": "PHP"})
+        assert any("x-powered-by" in f["description"] for f in findings)
+
+
+class TestCookieGrading:
+    def _cookie_findings(self, monkeypatch, cookie):
+        monkeypatch.setattr(website_scanner, "assert_safe_target", lambda u: u)
+        url = "https://example.com/"
+
+        class _Session:
+            headers = {}
+
+            def get(self, u, **k):
+                r = _Resp(200, {}, "<html></html>", url=url)
+                r.cookies = [cookie] if u == url else []
+                return r
+
+        monkeypatch.setattr(website_scanner.requests, "Session", lambda: _Session())
+        return [f for f in website_scanner.scan_website(url)
+                if f["description"].startswith("Cookie ")]
+
+    @staticmethod
+    def _cookie(name, secure, rest):
+        return type("C", (), {"name": name, "secure": secure, "_rest": rest})()
+
+    def test_missing_samesite_alone_is_low(self, monkeypatch):
+        """Every current browser defaults to Lax, so this is not a MEDIUM."""
+        found = self._cookie_findings(
+            monkeypatch, self._cookie("a", True, {"HttpOnly": None}))
+        assert found[0]["severity"] == "LOW"
+
+    def test_missing_secure_on_https_is_medium(self, monkeypatch):
+        found = self._cookie_findings(
+            monkeypatch, self._cookie("a", False, {"HttpOnly": None, "SameSite": "Lax"}))
+        assert found[0]["severity"] == "MEDIUM"
+        assert "missing Secure flag" in found[0]["description"]
+
+    def test_a_fully_configured_cookie_is_not_reported(self, monkeypatch):
+        found = self._cookie_findings(
+            monkeypatch,
+            self._cookie("a", True, {"HttpOnly": None, "SameSite": "Strict"}))
+        assert found == []
+
+
+class TestUnreachableTargets:
+    """A site that does not answer is not a vulnerable site."""
+
+    def _scan(self, monkeypatch):
+        monkeypatch.setattr(website_scanner, "assert_safe_target", lambda u: u)
+
+        class _Session:
+            headers = {}
+
+            def get(self, u, **k):
+                raise website_scanner.RequestException("Name or service not known")
+
+        monkeypatch.setattr(website_scanner.requests, "Session", lambda: _Session())
+        meta = {}
+        return website_scanner.scan_website("https://nope.invalid/", meta), meta
+
+    def test_no_high_severity_finding_is_invented(self, monkeypatch):
+        findings, _ = self._scan(monkeypatch)
+        assert not any(f["severity"] in ("HIGH", "CRITICAL") for f in findings)
+
+    def test_it_is_typed_as_a_scan_error(self, monkeypatch):
+        findings, meta = self._scan(monkeypatch)
+        assert findings[0]["type"] == "scan_error"
+        assert meta["unreachable"]
+
+    def test_it_does_not_score_as_a_vulnerability(self, monkeypatch):
+        findings, _ = self._scan(monkeypatch)
+        real = [f for f in findings if f.get("type") != "scan_error"]
+        assert orchestrator.compute_risk(real)["risk_score"] == 0
+
+
+class TestGithubItselfIsNotGithubPages:
+    """
+    github.com serves its own application with "Server: github.com", so the
+    header alone labelled GitHub a static host that cannot set response
+    headers. It ships a CSP and HSTS, so that was plainly wrong.
+    """
+
+    def test_github_com_is_not_flagged(self):
+        assert website_scanner.detect_static_host(
+            {"server": "github.com"}, "github.com") is None
+
+    def test_a_pages_site_still_is(self):
+        assert website_scanner.detect_static_host(
+            {"server": "GitHub.com"}, "someone.github.io") == "GitHub Pages"
+
+    def test_a_custom_domain_on_pages_still_is(self):
+        assert website_scanner.detect_static_host(
+            {"server": "GitHub.com"}, "example.com") == "GitHub Pages"
+
+    def test_other_github_hosts_are_excluded(self):
+        for host in ("api.github.com", "gist.github.com", "raw.githubusercontent.com"):
+            assert website_scanner.detect_static_host({"server": "github.com"}, host) is None
+
+
 def json_dump(obj) -> str:
     import json
     return json.dumps(obj)
