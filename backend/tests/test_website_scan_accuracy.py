@@ -255,7 +255,7 @@ class TestNoFabricatedPatches:
         "description": "Missing security header: X-Frame-Options",
     }
 
-    def _run(self, monkeypatch, tech_stack, llm_reply):
+    def _run(self, monkeypatch, tech_stack, llm_reply, vuln=None, repo_path=""):
         class _Response:
             content = llm_reply
 
@@ -266,7 +266,8 @@ class TestNoFabricatedPatches:
             return _Response()
 
         monkeypatch.setattr(orchestrator, "invoke_llm", _fake_invoke)
-        state = {"vulnerabilities": [self.VULN], "tech_stack": tech_stack}
+        state = {"vulnerabilities": [vuln or self.VULN], "tech_stack": tech_stack,
+                 "repo_path": repo_path}
         return orchestrator.fix_suggester_node(state), captured
 
     def test_website_patch_has_no_code_diff(self, monkeypatch):
@@ -287,15 +288,135 @@ class TestNoFabricatedPatches:
         assert "LIVE WEBSITE" in captured["system"]
         assert "Never invent source code" in captured["system"]
 
-    def test_repo_scan_still_produces_a_code_diff(self, monkeypatch):
+    def test_repo_scan_still_produces_a_code_diff(self, monkeypatch, tmp_path):
+        (tmp_path / "app.py").write_text(
+            "import sqlite3\n\n\ndef search(sql):\n    return query(sql)\n"
+        )
         reply = ('{"vuln_id": "VULN-002", "file": "app.py", '
-                 '"original_code": "query(sql)", "patched_code": "query(sql, params)", '
+                 '"original_code": "return query(sql)", '
+                 '"patched_code": "return query(sql, params)", '
                  '"explanation": "parameterised"}')
-        result, captured = self._run(monkeypatch, {"languages": ["python"]}, reply)
+        result, captured = self._run(
+            monkeypatch, {"languages": ["python"]}, reply,
+            vuln={"id": "VULN-002", "file": "app.py", "line": 5, "severity": "MEDIUM",
+                  "category": "A03:2021-Injection", "description": "SQL injection"},
+            repo_path=str(tmp_path),
+        )
         patch = result["patches"][0]
-        assert patch["original_code"] == "query(sql)"
-        assert patch["patched_code"] == "query(sql, params)"
+        assert patch["patched_code"] == "return query(sql, params)"
         assert "LIVE WEBSITE" not in captured["system"]
+
+
+# ── Patches are diffed against the real file ─────────────────────────────────
+
+class TestPatchesUseRealSource:
+    """
+    The fix suggester was given only a finding's metadata, never the source, so
+    it invented the code it claimed to patch. On a real scan it emitted
+    "ws = new WebSocket('ws://example.com/path')" for frontend/lib/ws.ts:14 —
+    a line that is not in that file, on a finding that Semgrep had matched
+    inside a JSDoc comment. The repository is already cloned, so the flagged
+    line is a fact to read, not something to ask a model about.
+    """
+
+    from agents import orchestrator as _orch
+
+    def _fix(self, monkeypatch, tmp_path, reply, line=5):
+        (tmp_path / "app.py").write_text(
+            "import os\n"
+            "\n"
+            "\n"
+            "def run(cmd):\n"
+            "    os.system(cmd)\n"
+            "\n"
+            "\n"
+            "def done():\n"
+            "    return True\n"
+        )
+        captured = {}
+
+        class _Response:
+            content = reply
+
+        def _fake_invoke(messages):
+            captured["human"] = messages[1].content
+            return _Response()
+
+        monkeypatch.setattr(self._orch, "invoke_llm", _fake_invoke)
+        state = {
+            "vulnerabilities": [{"id": "VULN-001", "file": "app.py", "line": line,
+                                 "severity": "HIGH", "category": "A03:2021-Injection",
+                                 "description": "Shell injection via os.system"}],
+            "tech_stack": {"languages": ["python"]},
+            "repo_path": str(tmp_path),
+        }
+        return self._orch.fix_suggester_node(state), captured
+
+    REPLY = ('{"vuln_id": "VULN-001", "file": "app.py", '
+             '"original_code": "os.system(user_input)  # invented", '
+             '"patched_code": "subprocess.run([cmd], shell=False)", '
+             '"explanation": "avoids the shell"}')
+
+    def test_the_real_source_is_shown_to_the_model(self, monkeypatch, tmp_path):
+        _, captured = self._fix(monkeypatch, tmp_path, self.REPLY)
+        assert "os.system(cmd)" in captured["human"]
+        assert "def run(cmd):" in captured["human"], "context lines are included"
+
+    def test_the_flagged_line_is_marked(self, monkeypatch, tmp_path):
+        _, captured = self._fix(monkeypatch, tmp_path, self.REPLY)
+        assert "    5 >|     os.system(cmd)" in captured["human"]
+
+    def test_invented_original_code_is_replaced_by_the_real_line(self, monkeypatch, tmp_path):
+        result, _ = self._fix(monkeypatch, tmp_path, self.REPLY)
+        patch = result["patches"][0]
+        assert patch["original_code"] == "    os.system(cmd)"
+        assert "invented" not in patch["original_code"]
+
+    def test_the_models_fix_is_kept(self, monkeypatch, tmp_path):
+        result, _ = self._fix(monkeypatch, tmp_path, self.REPLY)
+        assert result["patches"][0]["patched_code"] == "subprocess.run([cmd], shell=False)"
+
+    def test_the_excerpt_gutter_is_stripped_from_the_fix(self, monkeypatch, tmp_path):
+        """
+        Observed live: the model copied the excerpt's ">" marker into its
+        answer, so the report showed '>       - uses: actions/checkout@...'
+        as the patched code.
+        """
+        reply = ('{"vuln_id": "VULN-001", "file": "app.py", '
+                 '"patched_code": ">     subprocess.run([cmd], shell=False)", '
+                 '"explanation": "x"}')
+        result, _ = self._fix(monkeypatch, tmp_path, reply)
+        assert result["patches"][0]["patched_code"] == "    subprocess.run([cmd], shell=False)"
+
+    def test_numbered_gutter_is_stripped_too(self, monkeypatch, tmp_path):
+        reply = ('{"vuln_id": "VULN-001", "file": "app.py", '
+                 '"patched_code": "    5 >|     safe(cmd)", "explanation": "x"}')
+        result, _ = self._fix(monkeypatch, tmp_path, reply)
+        assert result["patches"][0]["patched_code"] == "    safe(cmd)"
+
+    def test_an_unreadable_file_yields_no_diff_at_all(self, monkeypatch, tmp_path):
+        """Nothing to verify against, so no diff may be presented as verified."""
+        result, _ = self._fix(monkeypatch, tmp_path, self.REPLY, line=999)
+        patch = result["patches"][0]
+        assert "original_code" not in patch
+        assert "patched_code" not in patch
+        assert "Could not read" in patch["explanation"]
+
+    def test_paths_outside_the_clone_are_refused(self, tmp_path):
+        (tmp_path / "app.py").write_text("x = 1\n")
+        assert self._orch.read_source_window(str(tmp_path), "../../etc/passwd", 1) is None
+
+    def test_missing_file_returns_nothing(self, tmp_path):
+        assert self._orch.read_source_window(str(tmp_path), "nope.py", 1) is None
+
+    def test_line_past_the_end_returns_nothing(self, tmp_path):
+        (tmp_path / "app.py").write_text("x = 1\n")
+        assert self._orch.read_source_window(str(tmp_path), "app.py", 40) is None
+
+    def test_reads_the_exact_line(self, tmp_path):
+        (tmp_path / "app.py").write_text("a\nb\nTARGET\nd\n")
+        _, exact = self._orch.read_source_window(str(tmp_path), "app.py", 3)
+        assert exact == "TARGET"
 
 
 # ── CORS context ─────────────────────────────────────────────────────────────

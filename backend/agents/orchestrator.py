@@ -380,6 +380,66 @@ def _recommendations_from_vulns(vulnerabilities: list[dict], limit: int = 3) -> 
     return recs
 
 
+_SOURCE_WINDOW = 4          # lines of context either side of the finding
+_MAX_SOURCE_BYTES = 2_000_000
+
+# "   12 >| some code" — the gutter the excerpt is rendered with. Models copy it
+# straight into their answer, which puts a line number and a marker into the
+# patched code shown in the report.
+_GUTTER_RE = re.compile(r"^\s*\d+\s*>?\s*\|\s?|^>\s?")
+
+
+def _strip_gutter(text: str) -> str:
+    """Remove excerpt line numbering the model echoed back into its patch."""
+    if not isinstance(text, str):
+        return text
+    return "\n".join(_GUTTER_RE.sub("", line) for line in text.splitlines())
+
+
+def read_source_window(repo_path: str, rel_file: str, line: int,
+                       radius: int = _SOURCE_WINDOW) -> tuple[str, str] | None:
+    """
+    Return (numbered context, the exact flagged line) from the cloned repo.
+
+    The fix suggester used to receive only a finding's metadata, so it invented
+    the code it claimed to be patching: for frontend/lib/ws.ts:14 it produced
+    "ws = new WebSocket('ws://example.com/path')", a line that is not in the
+    file. The repository is already on disk, so the real line can just be read.
+
+    Returns None when there is nothing trustworthy to show, in which case the
+    caller must not claim to know the original code.
+    """
+    if not repo_path or not rel_file or not line or line < 1:
+        return None
+
+    root = os.path.realpath(repo_path)
+    target = os.path.realpath(os.path.join(root, rel_file))
+    # A finding's path comes from a scanner, but it still ends up in an
+    # open() call, so keep it inside the clone.
+    if target != root and not target.startswith(root + os.sep):
+        logger.warning("fix_suggester: refusing to read outside the repo: %s", rel_file)
+        return None
+
+    try:
+        if os.path.getsize(target) > _MAX_SOURCE_BYTES:
+            return None
+        with open(target, "r", encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except (OSError, ValueError):
+        return None
+
+    if line > len(lines):
+        return None
+
+    start = max(0, line - 1 - radius)
+    end = min(len(lines), line + radius)
+    numbered = "\n".join(
+        f"{n + 1:>5}{' >' if n + 1 == line else '  '}| {lines[n]}"
+        for n in range(start, end)
+    )
+    return numbered, lines[line - 1]
+
+
 # Headers a browser only honours from a real response header, so a meta tag is
 # not a workaround for them. (CSP and Referrer-Policy are excluded: those can be
 # applied from the document, so the host is not what blocks them.)
@@ -939,11 +999,20 @@ Output only valid JSON. No markdown."""
     else:
         system_prompt = """You are a secure code fix agent.
 Generate a targeted code patch for the vulnerability provided.
+
+You are shown the real source around the finding, with the flagged line marked
+">". Patch THAT line. Never invent code that is not in the excerpt: copy the
+flagged line verbatim into original_code.
+
+If the flagged line is a comment, a string, or otherwise not the vulnerability
+the description claims, say so in the explanation and return the line unchanged
+in patched_code rather than inventing a fix.
+
 Return a single JSON object:
 {
   "vuln_id": "VULN-001",
   "file": "path/to/file.py",
-  "original_code": "the vulnerable snippet",
+  "original_code": "the vulnerable snippet, copied from the excerpt",
   "patched_code": "the fixed snippet",
   "explanation": "what changed and why it fixes the vulnerability"
 }
@@ -963,12 +1032,47 @@ Output only valid JSON. No markdown."""
                         f"{static_host} — gave the platform-level remediation")
             continue
 
+        source = None
+        if not is_website:
+            source = read_source_window(
+                state.get("repo_path", ""), vuln.get("file", ""), vuln.get("line", 0)
+            )
+
+        prompt = f"Fix this vulnerability:\n{json.dumps(vuln, indent=2)}"
+        if source:
+            context, _ = source
+            prompt += (
+                f"\n\nThe real source at {vuln['file']} "
+                f"(the flagged line is marked with '>'):\n{context}"
+            )
+            unreadable = False
+        else:
+            unreadable = not is_website
+
         response = invoke_llm([
             SystemMessage(content=system_prompt),
-            HumanMessage(content=f"Fix this vulnerability:\n{json.dumps(vuln, indent=2)}"),
+            HumanMessage(content=prompt),
         ])
 
         patch = _parse_json(response.content, None)
+
+        if isinstance(patch, dict) and source:
+            # The file is on disk, so the original line is a fact. Whatever the
+            # model echoed back, the report shows what is actually there.
+            _, exact = source
+            patch["original_code"] = exact
+            if "patched_code" in patch:
+                patch["patched_code"] = _strip_gutter(patch["patched_code"])
+        elif isinstance(patch, dict) and unreadable:
+            # No source to check the model against, so it must not present a
+            # diff as if there were one.
+            patch.pop("original_code", None)
+            patch.pop("patched_code", None)
+            patch["explanation"] = (
+                f"Could not read {vuln.get('file', 'the file')} to produce a "
+                f"verified diff. "
+            ) + str(patch.get("explanation", ""))
+
         if isinstance(patch, dict) and is_website:
             # Guarantee no fabricated diff reaches the report, whatever the
             # model returned. The UI hides empty diff blocks.
