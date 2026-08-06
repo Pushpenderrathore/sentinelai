@@ -3,6 +3,10 @@ name: CI
 on:
   push:
     branches: [master, main]
+    # Without this a release is never built: pushing v1.0.0 triggered nothing,
+    # so the tag people download had no CI run behind it and the only green
+    # check on the release commit came from Vercel.
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -206,3 +210,45 @@ jobs:
           assert h["system_profile"]["cpu_cores"] >= 1, h
           print("health check passed:", json.dumps(h))
           PY
+
+  # ── Release: the tag must match what the software reports ──────────────────
+  # v1.0.0 was tagged while backend/main.py and frontend/package.json still had
+  # to be edited by hand to match. Nothing enforced that they agreed, so a tag
+  # could claim one version while GET /health served another.
+  release-version:
+    name: Release version consistency
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Tag, backend and frontend must agree
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          BACKEND=$(grep -oE 'version="[^"]+"' backend/main.py | head -1 | cut -d'"' -f2)
+          FRONTEND=$(node -p "require('./frontend/package.json').version")
+          LOCKFILE=$(node -p "require('./frontend/package-lock.json').version")
+
+          echo "tag:              $TAG"
+          echo "backend/main.py:  $BACKEND"
+          echo "package.json:     $FRONTEND"
+          echo "package-lock.json:$LOCKFILE"
+
+          fail=0
+          if [ "$BACKEND" != "$TAG" ]; then
+            echo "::error::backend/main.py reports $BACKEND but the tag is $TAG"
+            fail=1
+          fi
+          if [ "$FRONTEND" != "$TAG" ]; then
+            echo "::error::frontend/package.json is $FRONTEND but the tag is $TAG"
+            fail=1
+          fi
+          if [ "$LOCKFILE" != "$TAG" ]; then
+            echo "::error::frontend/package-lock.json is $LOCKFILE but the tag is $TAG"
+            fail=1
+          fi
+          if [ "$fail" = "0" ]; then
+            echo "All version strings match the tag."
+          fi
+          exit $fail
