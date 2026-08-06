@@ -260,6 +260,57 @@ def _recommendations_from_vulns(vulnerabilities: list[dict], limit: int = 3) -> 
     return recs
 
 
+# Headers a browser only honours from a real response header, so a meta tag is
+# not a workaround for them. (CSP and Referrer-Policy are excluded: those can be
+# applied from the document, so the host is not what blocks them.)
+_HEADER_ONLY_POLICIES = (
+    "X-Frame-Options",
+    "X-Content-Type-Options",
+    "Permissions-Policy",
+    "Strict-Transport-Security",
+)
+
+
+def _header_remediation_for_static_host(vuln: dict, static_host: str | None) -> dict | None:
+    """
+    The fixed, correct answer for a header that the host cannot set.
+
+    Returns None when this is not that case, so the caller falls through to the
+    model. Deterministic because the remediation depends only on the platform:
+    asking an LLM produced confident instructions for a settings page that does
+    not exist.
+    """
+    if not static_host:
+        return None
+
+    description = vuln.get("description", "")
+    if "security header" not in description.lower():
+        return None
+    header = next((h for h in _HEADER_ONLY_POLICIES if h.lower() in description.lower()), None)
+    if not header:
+        return None
+
+    return {
+        "vuln_id": vuln.get("id", ""),
+        "file": vuln.get("file", ""),
+        "remediation": (
+            f"Not fixable on {static_host}. Serve the site through a proxy that "
+            f"can add headers (Cloudflare: Rules > Transform Rules > Modify "
+            f"Response Header), or move to a host with header rules "
+            f"(Netlify _headers, Vercel vercel.json, Cloudflare Pages _headers), "
+            f"then set: {header}"
+        ),
+        "explanation": (
+            f"{static_host} serves static files and exposes no way to set a "
+            f"response header, so there is no change to this repository that "
+            f"adds {header}. A meta tag is not a substitute: browsers ignore "
+            f"{header} in markup. Until the site sits behind something that can "
+            f"set headers, this finding stands as an accepted risk."
+        ),
+        "source": "platform-constraint",
+    }
+
+
 def _exploit_from_vuln(vuln: dict) -> dict:
     """
     Describe a vulnerability's attack surface without the LLM.
@@ -465,9 +516,16 @@ def _scan_website(state: ScanState) -> dict:
 
         raw_findings = raw_findings + port_findings
 
+        if meta.get("static_host"):
+            logs.append(f"[Scanner] Host is {meta['static_host']} — response headers "
+                        f"cannot be set here, remediation must go through a proxy or a "
+                        f"host that supports header rules")
+
         return {
             "repo_path": "",
-            "tech_stack": {"type": "website", "url": state["repo_url"]},
+            "tech_stack": {"type": "website", "url": state["repo_url"],
+                           "cdn": meta.get("cdn"),
+                           "static_host": meta.get("static_host")},
             "raw_findings": raw_findings,
             "status": "analyzing",
             "agent_logs": logs,
@@ -737,7 +795,20 @@ Return a single JSON object:
 }
 Output only valid JSON. No markdown."""
 
+    static_host = state.get("tech_stack", {}).get("static_host")
+
     for vuln in targets:
+        # When the host cannot set response headers, the remediation is a known
+        # fact about the platform, not something to ask a model about. Left to
+        # the LLM it answered "add the following header in the GitHub Pages
+        # settings", which is a setting that does not exist.
+        canned = _header_remediation_for_static_host(vuln, static_host)
+        if canned:
+            patches.append(canned)
+            logs.append(f"[FixSuggester] {vuln['id']} cannot be fixed on "
+                        f"{static_host} — gave the platform-level remediation")
+            continue
+
         response = invoke_llm([
             SystemMessage(content=system_prompt),
             HumanMessage(content=f"Fix this vulnerability:\n{json.dumps(vuln, indent=2)}"),

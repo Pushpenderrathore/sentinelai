@@ -298,6 +298,209 @@ class TestNoFabricatedPatches:
         assert "LIVE WEBSITE" not in captured["system"]
 
 
+# ── CORS context ─────────────────────────────────────────────────────────────
+
+class TestWildcardCorsIsGradedInContext:
+    """
+    "Access-Control-Allow-Origin: *" was graded HIGH on the header alone, which
+    reported "allows any origin to read API responses" against a static
+    portfolio with no API. It was also the only HIGH, so it set the risk
+    floor and drove most of the score.
+
+    The wildcard only discloses something when the response carries data the
+    caller is not already entitled to. On a public document it discloses
+    nothing, because a direct GET returns the same bytes.
+    """
+
+    # Matches the real demo target: GitHub Pages ships HSTS and the site
+    # applies its CSP from the document, so CORS was the only HIGH left.
+    PAGE = ('<html><head><meta http-equiv="Content-Security-Policy" '
+            'content="default-src \'self\'"></head><body>hi</body></html>')
+
+    def _scan(self, monkeypatch, headers):
+        monkeypatch.setattr(website_scanner, "assert_safe_target", lambda u: u)
+
+        class _Session:
+            headers = {}
+
+            def get(self, url, **k):
+                if url.endswith("/"):
+                    return _Resp(200, headers, TestWildcardCorsIsGradedInContext.PAGE)
+                return _Resp(404, {}, "")
+
+        monkeypatch.setattr(website_scanner.requests, "Session", lambda: _Session())
+        return website_scanner.scan_website("https://example.com/")
+
+    def _cors(self, findings):
+        return [f for f in findings if "CORS" in f["description"]]
+
+    def test_public_static_content_is_low_not_high(self, monkeypatch):
+        findings = self._scan(monkeypatch, {"access-control-allow-origin": "*",
+                                            "server": "GitHub.com"})
+        cors = self._cors(findings)
+        assert len(cors) == 1
+        assert cors[0]["severity"] == "LOW"
+        assert "already publicly readable" in cors[0]["description"]
+
+    def test_no_high_finding_remains_on_a_static_portfolio(self, monkeypatch):
+        """The whole point: this target should not carry a HIGH."""
+        findings = self._scan(monkeypatch, {
+            "access-control-allow-origin": "*",
+            "server": "GitHub.com",
+            "strict-transport-security": "max-age=31536000",
+        })
+        assert not [f for f in findings if f["severity"] == "HIGH"]
+
+    def test_credentialed_wildcard_is_still_high(self, monkeypatch):
+        cors = self._cors(self._scan(monkeypatch, {
+            "access-control-allow-origin": "*",
+            "access-control-allow-credentials": "true",
+        }))
+        assert cors[0]["severity"] == "HIGH"
+
+    def test_cookie_bearing_response_is_medium(self, monkeypatch):
+        cors = self._cors(self._scan(monkeypatch, {
+            "access-control-allow-origin": "*",
+            "set-cookie": "session=abc",
+        }))
+        assert cors[0]["severity"] == "MEDIUM"
+
+    def test_no_wildcard_means_no_finding(self, monkeypatch):
+        cors = self._cors(self._scan(monkeypatch, {
+            "access-control-allow-origin": "https://trusted.example",
+        }))
+        assert cors == []
+
+    def test_the_low_note_names_where_the_header_came_from(self, monkeypatch):
+        cors = self._cors(self._scan(monkeypatch, {"access-control-allow-origin": "*",
+                                                   "server": "GitHub.com"}))
+        assert "GitHub Pages" in cors[0]["code"]
+
+
+# ── Unfixable-on-this-host findings ──────────────────────────────────────────
+
+class TestStaticHostCannotSetHeaders:
+    """
+    GitHub Pages cannot set a response header at all, so "add X-Frame-Options"
+    is advice the owner cannot act on and the fix suggester answers it with
+    nginx config for a server that does not exist. The finding stays (visitors
+    really are unprotected) but it has to say so and give a real remediation.
+    """
+
+    def _scan(self, monkeypatch, headers, body="<html><body>hi</body></html>"):
+        monkeypatch.setattr(website_scanner, "assert_safe_target", lambda u: u)
+
+        class _Session:
+            headers = {}
+
+            def get(self, url, **k):
+                if url.endswith("/"):
+                    return _Resp(200, headers, body)
+                return _Resp(404, {}, "")
+
+        monkeypatch.setattr(website_scanner.requests, "Session", lambda: _Session())
+        return website_scanner.scan_website("https://example.com/")
+
+    def test_github_pages_is_detected(self):
+        assert website_scanner.detect_static_host({"server": "GitHub.com"}) == "GitHub Pages"
+
+    def test_an_ordinary_server_is_not_flagged(self):
+        assert website_scanner.detect_static_host({"server": "nginx/1.25"}) is None
+
+    def test_the_constraint_is_in_the_description(self, monkeypatch):
+        """The summariser and fix suggester only ever see the description."""
+        findings = self._scan(monkeypatch, {"server": "GitHub.com"})
+        xfo = next(f for f in findings if "X-Frame-Options" in f["description"])
+        assert "GitHub Pages cannot set response headers" in xfo["description"]
+
+    def test_the_evidence_names_a_remediation_that_works(self, monkeypatch):
+        findings = self._scan(monkeypatch, {"server": "GitHub.com"})
+        xfo = next(f for f in findings if "X-Frame-Options" in f["description"])
+        assert "Cloudflare" in xfo["code"]
+
+    def test_severity_is_unchanged(self, monkeypatch):
+        """Visitors are unprotected either way — being unable to fix it is not a downgrade."""
+        findings = self._scan(monkeypatch, {"server": "GitHub.com"})
+        xfo = next(f for f in findings if "X-Frame-Options" in f["description"])
+        assert xfo["severity"] == "MEDIUM"
+
+    def test_an_ordinary_host_gets_no_platform_note(self, monkeypatch):
+        findings = self._scan(monkeypatch, {"server": "nginx/1.25"})
+        xfo = next(f for f in findings if "X-Frame-Options" in f["description"])
+        assert "cannot set response headers" not in xfo["description"]
+
+    def test_meta_deliverable_headers_get_no_platform_note(self, monkeypatch):
+        """A meta tag IS the fix for CSP, so the host is not the blocker."""
+        findings = self._scan(monkeypatch, {"server": "GitHub.com"})
+        csp = next(f for f in findings if "Content-Security-Policy" in f["description"])
+        assert "cannot set response headers" not in csp["description"]
+
+
+# ── Remediation for headers the host cannot set ──────────────────────────────
+
+class TestStaticHostRemediationIsNotAskedOfTheModel:
+    """
+    Asked to fix a missing header on GitHub Pages, the model answered "add the
+    following header in the GitHub Pages settings" — a settings page that does
+    not exist. The remediation depends only on the platform, so it is a fact to
+    state, not a question to ask.
+    """
+
+    from agents import orchestrator as _orch
+
+    VULN = {"id": "VULN-002", "file": "https://example.com/", "severity": "MEDIUM",
+            "description": "Missing security header: X-Frame-Options "
+                           "(GitHub Pages cannot set response headers)"}
+
+    def test_returns_a_patch_without_calling_the_model(self):
+        patch = self._orch._header_remediation_for_static_host(self.VULN, "GitHub Pages")
+        assert patch["source"] == "platform-constraint"
+        assert patch["vuln_id"] == "VULN-002"
+
+    def test_names_a_route_that_actually_works(self):
+        patch = self._orch._header_remediation_for_static_host(self.VULN, "GitHub Pages")
+        assert "Cloudflare" in patch["remediation"]
+        assert "Not fixable on GitHub Pages" in patch["remediation"]
+
+    def test_says_a_meta_tag_will_not_work(self):
+        """The obvious wrong workaround, which browsers ignore."""
+        patch = self._orch._header_remediation_for_static_host(self.VULN, "GitHub Pages")
+        assert "meta tag is not a substitute" in patch["explanation"]
+
+    def test_ordinary_hosts_still_go_to_the_model(self):
+        assert self._orch._header_remediation_for_static_host(self.VULN, None) is None
+
+    def test_csp_is_not_treated_as_platform_blocked(self):
+        """A meta tag is a real fix for CSP, so the model should answer it."""
+        vuln = dict(self.VULN, description="Missing security header: Content-Security-Policy")
+        assert self._orch._header_remediation_for_static_host(vuln, "GitHub Pages") is None
+
+    def test_non_header_findings_are_untouched(self):
+        vuln = dict(self.VULN, description="Wildcard CORS policy on public content")
+        assert self._orch._header_remediation_for_static_host(vuln, "GitHub Pages") is None
+
+    def test_fix_suggester_uses_it_and_skips_the_llm(self, monkeypatch):
+        called = []
+
+        class _Response:
+            content = '{"vuln_id": "VULN-002", "remediation": "invented"}'
+
+        def _spy(messages):
+            called.append(1)
+            return _Response()
+
+        monkeypatch.setattr(self._orch, "invoke_llm", _spy)
+        result = self._orch.fix_suggester_node({
+            "vulnerabilities": [self.VULN],
+            "tech_stack": {"type": "website", "static_host": "GitHub Pages"},
+            "scan_id": "t",
+        })
+        assert called == [], "the model must not be asked"
+        assert result["patches"][0]["source"] == "platform-constraint"
+        assert any("cannot be fixed on GitHub Pages" in line
+                   for line in result["agent_logs"])
+
+
 def json_dump(obj) -> str:
     import json
     return json.dumps(obj)

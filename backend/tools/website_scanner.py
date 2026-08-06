@@ -238,6 +238,25 @@ CDN_MARKER_HEADERS = {
 }
 
 
+# Hosts that serve static files and give the owner no way to set a response
+# header. The missing-header findings are still true (visitors really are
+# unprotected), but "add this to your nginx config" is advice the owner cannot
+# act on, and it makes the fix suggester write config for a server that does
+# not exist. Name the constraint instead, and say what would actually fix it.
+STATIC_HOSTS_WITHOUT_HEADER_CONTROL = {
+    "github.com": "GitHub Pages",
+}
+
+
+def detect_static_host(headers: dict) -> str | None:
+    """Identify a static host that cannot set response headers, if any."""
+    server = headers.get("server", "").strip().lower()
+    for marker, name in STATIC_HOSTS_WITHOUT_HEADER_CONTROL.items():
+        if server == marker or server.startswith(marker):
+            return name
+    return None
+
+
 def detect_cdn(headers: dict) -> str | None:
     """Identify a fronting CDN from response headers, if there is one."""
     lowered = {k.lower(): v for k, v in headers.items()}
@@ -337,6 +356,7 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
     meta["final_url"] = getattr(resp, "url", url)
     meta["status_code"] = resp.status_code
     meta["cdn"] = detect_cdn(hdrs)
+    meta["static_host"] = detect_static_host(hdrs)
 
     # ── 1b. Anti-bot block ──────────────────────────────────────────────────
     # Everything below grades the response we received. If that response is a
@@ -378,6 +398,21 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
         from_meta = {}
     meta["meta_delivered"] = sorted(from_meta)
 
+    # Named in the finding itself, not just the evidence, because the summariser
+    # and the fix suggester only ever see the description.
+    static_host = meta.get("static_host")
+    host_note = (
+        f" ({static_host} cannot set response headers)" if static_host else ""
+    )
+    host_evidence = (
+        f" {static_host} serves static files only and offers no way to set "
+        f"response headers, so this cannot be fixed on the current host. It "
+        f"needs a proxy or CDN in front that can add headers (for example "
+        f"Cloudflare), or a host with header rules (Netlify _headers, "
+        f"Vercel vercel.json)."
+        if static_host else ""
+    )
+
     for header, (sev, cat) in SECURITY_HEADERS.items():
         key = header.lower()
         if key in hdrs:
@@ -399,12 +434,20 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
                     "frame-ancestors, report-uri, report-to and sandbox are "
                     "only honoured in a response header. Clickjacking "
                     "protection therefore still needs X-Frame-Options or the "
-                    "same CSP sent as a header.",
+                    "same CSP sent as a header." + host_evidence,
                 ))
             continue
-        findings.append(_f(url, sev, cat,
-                          f"Missing security header: {header}",
-                          f"HTTP response has no {header} header"))
+        # CSP and Referrer-Policy can be applied from the document, so the host
+        # is not what is stopping them: saying "GitHub Pages cannot set response
+        # headers" against a missing CSP would point at the wrong remediation.
+        platform_blocked = header not in META_DELIVERABLE_HEADERS
+        findings.append(_f(
+            url, sev, cat,
+            f"Missing security header: {header}"
+            f"{host_note if platform_blocked else ''}",
+            f"HTTP response has no {header} header."
+            f"{host_evidence if platform_blocked else ''}",
+        ))
 
     # ── 4. Server / technology info disclosure ──────────────────────────────
     for h in ("server", "x-powered-by", "x-aspnet-version", "x-aspnetmvc-version"):
@@ -428,10 +471,54 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
             pass
 
     # ── 6. CORS wildcard ────────────────────────────────────────────────────
-    if hdrs.get("access-control-allow-origin") == "*":
-        findings.append(_f(url, "HIGH", "A05:2021-Security Misconfiguration",
-                          "Wildcard CORS policy allows any origin to read API responses",
-                          "Access-Control-Allow-Origin: *"))
+    # A bare "Access-Control-Allow-Origin: *" is not a vulnerability by itself.
+    # It only exposes something when the response carries data the requester
+    # would not otherwise be entitled to: cookie-authenticated content, or a
+    # host reachable from a network position the attacker lacks. On a public
+    # static document a cross-origin read returns exactly what a direct GET
+    # returns, so nothing is disclosed.
+    #
+    # Grading the header alone reported a HIGH "allows any origin to read API
+    # responses" against a static portfolio with no API, which is the same
+    # mistake as grading a bot-challenge page: a confident finding about
+    # something the evidence does not support.
+    if hdrs.get("access-control-allow-origin", "").strip() == "*":
+        credentialed = (hdrs.get("access-control-allow-credentials", "")
+                        .strip().lower() == "true")
+        sets_cookies = "set-cookie" in hdrs or bool(getattr(resp, "cookies", None))
+
+        if credentialed:
+            findings.append(_f(
+                url, "HIGH", "A05:2021-Security Misconfiguration",
+                "Wildcard CORS policy combined with credentialed requests",
+                "Access-Control-Allow-Origin: * with "
+                "Access-Control-Allow-Credentials: true. Browsers reject that "
+                "combination, so the server is either misconfigured or "
+                "reflecting the request origin elsewhere; either way any "
+                "origin may be able to read authenticated responses.",
+            ))
+        elif sets_cookies:
+            findings.append(_f(
+                url, "MEDIUM", "A05:2021-Security Misconfiguration",
+                "Wildcard CORS policy on a response that sets cookies",
+                "Access-Control-Allow-Origin: * on a response carrying "
+                "Set-Cookie. The wildcard blocks credentialed cross-origin "
+                "reads, but session-bearing endpoints on this origin should "
+                "name their allowed origins explicitly rather than rely on it.",
+            ))
+        else:
+            source = f" It is the default for {meta['static_host']}." if meta.get("static_host") else (
+                f" It is set by the fronting {meta['cdn']}." if meta.get("cdn") else "")
+            findings.append(_f(
+                url, "LOW", "A05:2021-Security Misconfiguration",
+                "Wildcard CORS policy on public content: any origin may read "
+                "this response, which is already publicly readable",
+                "Access-Control-Allow-Origin: * with no "
+                "Access-Control-Allow-Credentials and no Set-Cookie, so a "
+                "cross-origin read returns exactly what a direct request "
+                "returns and no private data is exposed." + source +
+                " Revisit if this origin later serves authenticated APIs.",
+            ))
 
     # ── 7. Dangerous HTTP methods ───────────────────────────────────────────
     allow = hdrs.get("allow", "")
