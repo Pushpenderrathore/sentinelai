@@ -195,7 +195,7 @@ async def lifespan(app: FastAPI):
     _exam_sessions.clear()
 
 
-app = FastAPI(title="SentinelAI", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="SentinelAI", version="1.0.0", lifespan=lifespan)
 
 _default_origins = "http://localhost:3000,http://127.0.0.1:3000"
 # ALLOWED_ORIGIN_REGEX is handy for Vercel preview URLs, e.g.
