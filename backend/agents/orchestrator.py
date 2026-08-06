@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 
+_MISSING = object()  # sentinel: "no value yet", since None is a valid parse result
+
 
 def _balanced_slice(text: str, open_ch: str, close_ch: str) -> str | None:
     """Return the first balanced open_ch..close_ch span, ignoring brackets that
@@ -76,6 +78,12 @@ def _parse_json(text: str, fallback: object) -> object:
     full of real findings was reported as clean. Try, in order: the raw text,
     any fenced block, then the first balanced JSON array or object anywhere in
     the response.
+
+    Each candidate is also retried with strict=False, which tolerates literal
+    newlines inside string values. Models produce those whenever the schema
+    asks for prose — a "step-by-step attack walkthrough" comes back with real
+    line breaks in it — and the strict parser rejects the whole document for
+    it, discarding an otherwise perfectly good answer.
     """
     cleaned = text.strip()
     candidates = [cleaned]
@@ -85,13 +93,32 @@ def _parse_json(text: str, fallback: object) -> object:
         if span:
             candidates.append(span)
 
+    # The fallback declares the shape the caller wants. Without that, a reply
+    # like {"executive_summary": ..., "key_recommendations": [...]} was parsed
+    # into just the inner recommendations array, because the first balanced
+    # "[" span is found before the enclosing "{" span — a perfectly good
+    # summary object came back as a list and was discarded.
+    expected = type(fallback) if isinstance(fallback, (list, dict)) else None
+    wrong_shape = _MISSING
+
     for candidate in candidates:
         if not candidate:
             continue
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
+        for strict in (True, False):
+            try:
+                value = json.loads(candidate, strict=strict)
+            except json.JSONDecodeError:
+                continue
+            if expected is None or isinstance(value, expected):
+                return value
+            if wrong_shape is _MISSING:
+                wrong_shape = value
+            break
+
+    if wrong_shape is not _MISSING:
+        # Parsed, but not the shape asked for. Still better than the fallback:
+        # the caller normalises it.
+        return wrong_shape
 
     logger.warning("JSON parse failed, using fallback. Raw: %s", text[:200])
     return fallback
@@ -110,6 +137,56 @@ _SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
 # Patch generation is one LLM call per vulnerability, so it is capped.
 _MAX_PATCH_TARGETS = int(os.getenv("MAX_PATCH_TARGETS", "10"))
+
+# ── Risk scoring ──────────────────────────────────────────────
+# The risk score used to be whatever number the model wrote, and it did not
+# survive comparison between scans: 12 findings (1 HIGH, 5 MEDIUM, 6 LOW)
+# scored 20/100 LOW while 6 findings (1 HIGH, 2 MEDIUM, 3 LOW) scored 40/100
+# MEDIUM — half the findings, less severe, double the score. The score is the
+# largest number in the UI and it is plotted as a trend across rescans, so it
+# has to be reproducible and it has to fall when a vulnerability is fixed.
+# It is now derived from the severity counts; the model only writes prose.
+_SEVERITY_WEIGHT = {"CRITICAL": 40, "HIGH": 20, "MEDIUM": 8, "LOW": 2}
+# Each severity contributes at most this much, so a long tail of LOW findings
+# cannot add up to a crisis (50 informational findings is not a breach).
+_SEVERITY_BAND_CAP = {"CRITICAL": 100, "HIGH": 60, "MEDIUM": 30, "LOW": 10}
+# ...and the worst finding sets a floor, so one RCE in an otherwise clean repo
+# cannot be diluted into a low score.
+_SEVERITY_FLOOR = {"CRITICAL": 80, "HIGH": 40, "MEDIUM": 15, "LOW": 5}
+_RISK_BANDS = ((80, "CRITICAL"), (60, "HIGH"), (30, "MEDIUM"), (0, "LOW"))
+
+
+def compute_risk(vulnerabilities: list[dict]) -> dict:
+    """
+    Score 0-100 from the severity mix, plus the arithmetic behind it.
+
+    Deterministic and monotonic: the same findings always give the same score,
+    and removing a finding never raises it.
+    """
+    counts = {sev: 0 for sev in _VALID_SEVERITIES}
+    for v in vulnerabilities:
+        sev = (v.get("severity") or "").upper()
+        counts[sev if sev in counts else "MEDIUM"] += 1
+
+    contributions = {
+        sev: min(_SEVERITY_BAND_CAP[sev], _SEVERITY_WEIGHT[sev] * n)
+        for sev, n in counts.items()
+    }
+    score = sum(contributions.values())
+
+    worst = next((sev for sev in _VALID_SEVERITIES if counts[sev]), None)
+    if worst:
+        score = max(score, _SEVERITY_FLOOR[worst])
+    score = min(100, score)
+
+    level = next(name for threshold, name in _RISK_BANDS if score >= threshold)
+    return {
+        "risk_score": score,
+        "overall_risk": level,
+        "counts": counts,
+        "contributions": contributions,
+        "floor_applied": _SEVERITY_FLOOR[worst] if worst else 0,
+    }
 
 
 def _normalize_severity(finding: dict) -> str:
@@ -152,6 +229,71 @@ def _vulns_from_raw_findings(findings: list[dict]) -> list[dict]:
             "rule": f.get("test_id") or f.get("rule_id") or "",
         })
     return vulns
+
+
+def _recommendations_from_vulns(vulnerabilities: list[dict], limit: int = 3) -> list[str]:
+    """
+    Derive action items from the findings themselves.
+
+    The report model sometimes returns an executive summary and simply omits
+    key_recommendations, which rendered as an empty "Key Recommendations"
+    section on a report that had six findings. The most severe findings are
+    the recommendations, so they never need to be invented.
+    """
+    ranked = sorted(
+        vulnerabilities,
+        key=lambda v: _SEVERITY_RANK.get((v.get("severity") or "").upper(), 99),
+    )
+    recs, seen = [], set()
+    for v in ranked:
+        # Falls back to the OWASP category so a finding with a blank
+        # description still produces an action item rather than vanishing.
+        description = (v.get("description") or "").strip() or v.get("category", "")
+        if not description or description in seen:
+            continue
+        seen.add(description)
+        location = v.get("file") or ""
+        suffix = f" ({location})" if location and not location.startswith("http") else ""
+        recs.append(f"[{v.get('severity', 'MEDIUM')}] Remediate: {description}{suffix}")
+        if len(recs) == limit:
+            break
+    return recs
+
+
+def _exploit_from_vuln(vuln: dict) -> dict:
+    """
+    Describe a vulnerability's attack surface without the LLM.
+
+    Counterpart to _vulns_from_raw_findings: when the model returns nothing
+    usable for a finding, the OWASP category still supplies a real attack
+    vector and impact. Degraded enrichment, not a missing finding.
+    """
+    from tools.owasp_data import get_category_detail
+
+    detail = get_category_detail(vuln.get("category", "")) or {}
+    location = vuln.get("file") or "the affected component"
+    if vuln.get("line"):
+        location = f"{location}:{vuln['line']}"
+    examples = detail.get("examples") or []
+
+    return {
+        "vuln_id": vuln["id"],
+        # Unscored rather than guessed — claiming EASY without analysis would
+        # be the same invention this fallback exists to avoid.
+        "exploitability": "UNKNOWN",
+        "attack_vector": (
+            f"{detail.get('name', 'Security weakness')} reachable at {location}. "
+            f"Typical vector: {examples[0]}" if examples
+            else f"{detail.get('name', 'Security weakness')} reachable at {location}."
+        ),
+        "impact": detail.get("description", vuln.get("description", "")),
+        "poc_description": (
+            "Automated exploit reasoning was unavailable for this finding. "
+            f"Reproduce manually at {location}: {vuln.get('description', '')}"
+        ),
+        "cwes": detail.get("cwes", []),
+        "source": "owasp-reference",
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -483,16 +625,47 @@ Output only a valid JSON array. Be specific and technical. No markdown."""),
         HumanMessage(content=f"Reason about exploitability:\n{json.dumps(targets, indent=2)}"),
     ])
 
-    exploits = _parse_json(response.content, [])
+    parsed = _parse_json(response.content, [])
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list):
+        parsed = []
+
+    # Keep only entries that describe a vulnerability this scan actually found.
+    # A model that hallucinates VULN-042 would otherwise put an exploit in the
+    # report with nothing to click through to.
+    target_ids = {v["id"] for v in targets}
+    exploits = [
+        e for e in parsed
+        if isinstance(e, dict) and e.get("vuln_id") in target_ids
+    ]
+
+    # The log used to count the parsed reply, so a failed parse announced
+    # "Analyzed 0 critical/high vulnerabilities" on a report that displayed a
+    # HIGH finding and a patch for it — the pipeline looked like it disagreed
+    # with itself. Every target is now accounted for: enriched by the model
+    # where that worked, described from the OWASP category where it did not.
+    covered = {e["vuln_id"] for e in exploits}
+    unenriched = [v for v in targets if v["id"] not in covered]
+    exploits.extend(_exploit_from_vuln(v) for v in unenriched)
+    exploits.sort(key=lambda e: _SEVERITY_RANK.get(
+        next((v["severity"] for v in targets if v["id"] == e["vuln_id"]), ""), 99))
+
     easy = sum(1 for e in exploits if e.get("exploitability") == "EASY")
+    logs = [
+        f"[ExploitReasoner] Analyzed {len(exploits)}/{len(targets)} critical/high vulnerabilities",
+        f"[ExploitReasoner] {easy} are trivially exploitable (EASY)",
+    ]
+    if unenriched:
+        logs.append(
+            f"[ExploitReasoner] LLM enrichment unavailable for {len(unenriched)} "
+            f"finding(s) — attack context taken from the OWASP category"
+        )
 
     return {
         "exploits": exploits,
         "status": "patching",
-        "agent_logs": [
-            f"[ExploitReasoner] Analyzed {len(exploits)} critical/high vulnerabilities",
-            f"[ExploitReasoner] {easy} are trivially exploitable (EASY)",
-        ],
+        "agent_logs": logs,
     }
 
 
@@ -599,41 +772,71 @@ Output only valid JSON. No markdown."""
 
 def report_generator_node(state: ScanState) -> dict:
     """Compiles all agent outputs into the final structured report."""
-    critical = [v for v in state.get("vulnerabilities", []) if v["severity"] == "CRITICAL"]
-    high = [v for v in state.get("vulnerabilities", []) if v["severity"] == "HIGH"]
+    vulns = state.get("vulnerabilities", [])
+    critical = [v for v in vulns if v["severity"] == "CRITICAL"]
+    high = [v for v in vulns if v["severity"] == "HIGH"]
+
+    # Scored here, before the model is asked for anything, so the number is a
+    # fact about the findings rather than an opinion about them.
+    risk = compute_risk(vulns)
 
     response = invoke_llm([
         SystemMessage(content="""You are a security report writer.
 Produce an executive summary for a security audit.
+
+The risk score has already been calculated from the severity counts. Do not
+restate it, dispute it, or invent one of your own — describe what was found.
+
 Return a JSON object:
 {
   "executive_summary": "2-3 sentences for a non-technical stakeholder",
-  "risk_score": <integer 0-100>,
-  "overall_risk": "CRITICAL|HIGH|MEDIUM|LOW",
   "key_recommendations": ["top 3 action items, ordered by priority"]
 }
 Output only valid JSON. No markdown."""),
         HumanMessage(content=f"""Repository: {state['repo_url']}
 Tech stack: {state.get('tech_stack', {})}
-Total vulnerabilities: {len(state.get('vulnerabilities', []))}
+Total vulnerabilities: {len(vulns)}
 Critical: {len(critical)}, High: {len(high)}
-Top findings: {json.dumps(state.get('vulnerabilities', [])[:5], indent=2)}"""),
+Assessed risk: {risk['overall_risk']} ({risk['risk_score']}/100)
+Top findings: {json.dumps(vulns[:5], indent=2)}"""),
     ])
 
     summary = _parse_json(response.content, {
         "executive_summary": "Security scan completed. Review findings for details.",
-        "risk_score": 50,
-        "overall_risk": "MEDIUM",
         "key_recommendations": ["Review and patch all CRITICAL and HIGH findings immediately."],
     })
+    if not isinstance(summary, dict):
+        summary = {"executive_summary": "Security scan completed. Review findings for details."}
+
+    # Authoritative, whatever the model returned.
+    summary["risk_score"] = risk["risk_score"]
+    summary["overall_risk"] = risk["overall_risk"]
+    summary["risk_breakdown"] = {
+        "counts": risk["counts"],
+        "contributions": risk["contributions"],
+        "weights": _SEVERITY_WEIGHT,
+        "band_caps": _SEVERITY_BAND_CAP,
+        "floor_applied": risk["floor_applied"],
+        "method": (
+            "score = sum over severities of min(count * weight, band cap), "
+            "raised to the floor for the most severe finding, capped at 100"
+        ),
+    }
 
     # Normalise key_recommendations — local models sometimes return objects
+    # ...as {"priority": 1, "action_item": "..."} among others.
     recs = summary.get("key_recommendations", [])
     summary["key_recommendations"] = [
         r if isinstance(r, str)
-        else r.get("recommendation") or r.get("text") or str(r)
+        else (r.get("action_item") or r.get("recommendation")
+              or r.get("action") or r.get("text") or str(r))
         for r in (recs if isinstance(recs, list) else [])
+        if r
     ]
+    # ...and sometimes omit the key entirely. An empty recommendations section
+    # under a list of findings reads as "nothing to do here".
+    if not summary["key_recommendations"] and vulns:
+        summary["key_recommendations"] = _recommendations_from_vulns(vulns)
 
     report = {
         "scan_id": state["scan_id"],
@@ -651,7 +854,12 @@ Top findings: {json.dumps(state.get('vulnerabilities', [])[:5], indent=2)}"""),
         "report": report,
         "status": "done",
         "agent_logs": [
-            f"[ReportGenerator] Risk score: {summary['risk_score']}/100",
+            "[ReportGenerator] Severity counts: "
+            + ", ".join(f"{sev} {risk['counts'][sev]}" for sev in _VALID_SEVERITIES),
+            "[ReportGenerator] Score contributions: "
+            + ", ".join(f"{sev} +{risk['contributions'][sev]}" for sev in _VALID_SEVERITIES)
+            + (f", floor {risk['floor_applied']}" if risk["floor_applied"] else ""),
+            f"[ReportGenerator] Risk score: {summary['risk_score']}/100 (calculated, not model-generated)",
             f"[ReportGenerator] Overall risk: {summary['overall_risk']}",
             f"[ReportGenerator] Scan {state['scan_id']} complete.",
         ],

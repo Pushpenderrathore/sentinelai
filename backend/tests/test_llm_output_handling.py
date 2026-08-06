@@ -39,6 +39,53 @@ class TestParseJson:
         raw = "```\n[{\"id\": \"V3\"}]\n```"
         assert orchestrator._parse_json(raw, "FB") == [{"id": "V3"}]
 
+    def test_literal_newlines_inside_a_string_value(self):
+        """
+        Observed from the exploit reasoner: asked for a "step-by-step attack
+        walkthrough", the model wrote real line breaks into the string. The
+        JSON is otherwise complete, but strict parsing rejects control
+        characters in strings and threw the whole answer away.
+        """
+        raw = ('[{"vuln_id": "VULN-006", "poc_description": "Steps:\n\n'
+               '1. Find the endpoint\n2. Send the request"}]')
+        parsed = orchestrator._parse_json(raw, "FB")
+        assert parsed[0]["vuln_id"] == "VULN-006"
+        assert "1. Find the endpoint" in parsed[0]["poc_description"]
+
+    def test_literal_newlines_after_a_prose_preamble(self):
+        """Both defects at once, which is what actually came back."""
+        raw = ('Here is the analysis:\n\n[{"vuln_id": "VULN-006", '
+               '"poc_description": "Step 1:\nsend a request"}]\n\n'
+               'Note: exploitability is EASY.')
+        assert orchestrator._parse_json(raw, "FB")[0]["vuln_id"] == "VULN-006"
+
+    def test_still_falls_back_on_genuinely_broken_json(self):
+        """Lenient parsing must not turn unparseable output into a false parse."""
+        assert orchestrator._parse_json('[{"id": ', "FB") == "FB"
+
+    def test_object_wins_over_an_array_nested_inside_it(self):
+        """
+        The report summary is an object whose second key is an array. The
+        first balanced "[" span is found before the enclosing "{", so the
+        whole summary used to be parsed down to just its recommendations.
+        """
+        raw = ('Here is the summary:\n\n{\n"executive_summary": "six findings",\n'
+               '"key_recommendations": ["a", "b"]\n}')
+        parsed = orchestrator._parse_json(raw, {"executive_summary": "fallback"})
+        assert isinstance(parsed, dict)
+        assert parsed["executive_summary"] == "six findings"
+
+    def test_array_is_still_preferred_when_an_array_is_expected(self):
+        raw = 'Findings:\n[{"id": "V1", "meta": {"a": 1}}]'
+        parsed = orchestrator._parse_json(raw, [])
+        assert isinstance(parsed, list)
+        assert parsed[0]["id"] == "V1"
+
+    def test_wrong_shape_still_beats_the_fallback(self):
+        """A bare object where a list was expected: the caller can wrap it."""
+        parsed = orchestrator._parse_json('{"vuln_id": "V1"}', [])
+        assert parsed == {"vuln_id": "V1"}
+
     def test_array_wrapped_in_object(self):
         raw = '{"vulnerabilities": [{"id": "V4"}]}'
         assert orchestrator._parse_json(raw, "FB") == {"vulnerabilities": [{"id": "V4"}]}
@@ -187,3 +234,69 @@ class TestFindingsSurviveLLMFailure:
         monkeypatch.setattr(orchestrator, "invoke_llm", lambda *a, **k: _Response())
         result = orchestrator.vuln_analyzer_node({"raw_findings": [], "scan_id": "t"})
         assert result["vulnerabilities"] == []
+
+
+# ── Exploit reasoner ─────────────────────────────────────────────────────────
+
+class TestExploitReasonerAccounting:
+    """
+    Same class of bug, one node later: the log counted the parsed LLM reply
+    rather than the vulnerabilities it was given, so an unparseable reply
+    printed "Analyzed 0 critical/high vulnerabilities" on a report that showed
+    a HIGH finding and a generated patch for it.
+    """
+
+    VULNS = [
+        {"id": "VULN-006", "file": "app/db.py", "line": 12, "severity": "HIGH",
+         "category": "A03:2021-Injection", "description": "SQL injection", "cve": None},
+        {"id": "VULN-007", "file": "app/auth.py", "line": 40, "severity": "MEDIUM",
+         "category": "A01:2021-Broken Access Control", "description": "IDOR", "cve": None},
+    ]
+
+    def _run(self, monkeypatch, llm_reply):
+        class _Response:
+            content = llm_reply
+
+        monkeypatch.setattr(orchestrator, "invoke_llm", lambda *a, **k: _Response())
+        return orchestrator.exploit_reasoner_node(
+            {"vulnerabilities": self.VULNS, "scan_id": "test"}
+        )
+
+    def test_unparseable_reply_still_accounts_for_every_target(self, monkeypatch):
+        result = self._run(monkeypatch, "I could not analyse these.")
+        assert [e["vuln_id"] for e in result["exploits"]] == ["VULN-006"]
+        assert any("Analyzed 1/1" in line for line in result["agent_logs"])
+
+    def test_fallback_entry_carries_real_owasp_context(self, monkeypatch):
+        exploit = self._run(monkeypatch, "nonsense")["exploits"][0]
+        assert exploit["exploitability"] == "UNKNOWN"
+        assert "Injection" in exploit["attack_vector"]
+        assert "app/db.py:12" in exploit["attack_vector"]
+        assert exploit["source"] == "owasp-reference"
+
+    def test_degraded_mode_is_disclosed_in_the_logs(self, monkeypatch):
+        result = self._run(monkeypatch, "nonsense")
+        assert any("LLM enrichment unavailable" in line
+                   for line in result["agent_logs"])
+
+    def test_good_llm_output_is_used_as_is(self, monkeypatch):
+        reply = ('[{"vuln_id": "VULN-006", "exploitability": "EASY", '
+                 '"attack_vector": "unauthenticated POST /login", '
+                 '"impact": "database dump", "poc_description": "..."}]')
+        result = self._run(monkeypatch, reply)
+        assert result["exploits"][0]["exploitability"] == "EASY"
+        assert not any("LLM enrichment unavailable" in line
+                       for line in result["agent_logs"])
+
+    def test_hallucinated_vuln_ids_are_dropped(self, monkeypatch):
+        """An exploit for a finding that does not exist has nothing to link to."""
+        reply = ('[{"vuln_id": "VULN-042", "exploitability": "EASY", '
+                 '"attack_vector": "x", "impact": "y", "poc_description": "z"}]')
+        result = self._run(monkeypatch, reply)
+        assert [e["vuln_id"] for e in result["exploits"]] == ["VULN-006"]
+        assert result["exploits"][0]["exploitability"] == "UNKNOWN"
+
+    def test_medium_findings_are_not_reasoned_about(self, monkeypatch):
+        """Only CRITICAL/HIGH are in scope, so VULN-007 must not appear."""
+        result = self._run(monkeypatch, "nonsense")
+        assert all(e["vuln_id"] != "VULN-007" for e in result["exploits"])

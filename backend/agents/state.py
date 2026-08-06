@@ -21,7 +21,7 @@ class Vulnerability(TypedDict):
 
 class ExploitAnalysis(TypedDict):
     vuln_id: str
-    exploitability: str     # EASY | MODERATE | HARD
+    exploitability: str     # EASY | MODERATE | HARD | UNKNOWN (not model-assessed)
     attack_vector: str
     impact: str
     poc_description: str
