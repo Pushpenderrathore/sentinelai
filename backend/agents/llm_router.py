@@ -98,8 +98,22 @@ def _build_ollama():
             from langchain_ollama import ChatOllama
             model    = _ollama_model()
             base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-            logger.info("llm_router: Ollama → %s @ %s", model, base_url)
-            _ollama_llm = ChatOllama(model=model, base_url=base_url, temperature=0)
+            # Ollama defaults to a 2048-token context. The exploit reasoner
+            # sends the whole OWASP Top 10 reference as grounding, which very
+            # nearly fills that on its own, so the JSON answer was being cut
+            # off mid-string: the array never closed, no parser could recover
+            # it, and every offline scan silently fell back to unenriched
+            # findings. Give the answer room.
+            num_ctx     = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
+            num_predict = int(os.getenv("OLLAMA_NUM_PREDICT", "2048"))
+            logger.info("llm_router: Ollama → %s @ %s (num_ctx=%d)", model, base_url, num_ctx)
+            _ollama_llm = ChatOllama(
+                model=model,
+                base_url=base_url,
+                temperature=0,
+                num_ctx=num_ctx,
+                num_predict=num_predict,
+            )
         return _ollama_llm
 
 
