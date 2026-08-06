@@ -235,12 +235,24 @@ def _vulns_from_raw_findings(findings: list[dict]) -> list[dict]:
     return vulns
 
 
+# Sources whose severity is a fact from a tool, not an opinion to revisit.
+#
 # Website findings come from deterministic header checks in our own code: the
-# header is present or it is not. There is nothing for a model to infer, so its
-# severity and wording are not opinions worth taking. Static-analysis findings
-# are different — mapping a Bandit test id to an OWASP category and judging how
-# exploitable it is, is real work the model does well.
-_AUTHORITATIVE_SOURCES = {"website"}
+# header is present or it is not. Semgrep and Bandit severities are the rule
+# author's considered rating, and anyone can run either tool and compare.
+#
+# The model was allowed to re-rate static analysis on the theory that judging
+# exploitability is real work. Measured on a self-scan, it was not judging: it
+# promoted every Semgrep WARNING to HIGH, turning 1 HIGH / 12 MEDIUM / 24 LOW
+# into 15 HIGH / 0 MEDIUM / 23 LOW and the score from 60 to 70. Reproducibility
+# is worth more than that. The model still supplies category, CVE and prose.
+_AUTHORITATIVE_SEVERITY = {"website", "semgrep", "bandit"}
+
+# Wording is a separate question. The website descriptions are deliberately
+# phrased and a rewrite loses the meaning (the meta-CSP note was inverted into
+# "Implement Content-Security-Policy" once already). Semgrep and Bandit messages
+# are terse and factual, so the model's prose is an improvement there.
+_AUTHORITATIVE_WORDING = {"website"}
 
 
 def _norm(text: str) -> str:
@@ -333,15 +345,15 @@ def _merge_llm_enrichment(baseline: list[dict], llm_vulns: list[dict],
         if isinstance(cve, str) and cve.strip().upper().startswith("CVE-"):
             result["cve"] = cve.strip()
 
-        if vuln.get("source") in _AUTHORITATIVE_SOURCES:
-            # Severity and wording stay as observed. The website descriptions
-            # are deliberately phrased (the meta-CSP note, the platform
-            # constraint) and a rewrite loses that.
+        source = vuln.get("source")
+        if source in _AUTHORITATIVE_SEVERITY:
             stats["severity_kept"] += 1
         else:
             severity = (entry.get("severity") or "").upper()
             if severity in _VALID_SEVERITIES:
                 result["severity"] = severity
+
+        if source not in _AUTHORITATIVE_WORDING:
             description = entry.get("description")
             if isinstance(description, str) and description.strip():
                 result["description"] = description.strip()

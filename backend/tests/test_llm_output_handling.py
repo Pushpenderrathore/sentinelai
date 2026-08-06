@@ -228,8 +228,9 @@ class TestFindingsSurviveLLMFailure:
         result = self._run(monkeypatch, reply)
         vulns = result["vulnerabilities"]
         assert len(vulns) == len(self.RAW)
-        assert vulns[0]["severity"] == "CRITICAL", "model severity is taken for source findings"
-        assert vulns[0]["category"] == "A03:2021-Injection"
+        assert vulns[0]["category"] == "A03:2021-Injection", "category comes from the model"
+        assert vulns[0]["description"] == "SQL injection", "prose comes from the model"
+        assert vulns[0]["severity"] == "MEDIUM", "but Bandit's severity stands"
         assert vulns[1]["severity"] == "MEDIUM", "the skipped finding keeps the scanner's severity"
         assert not any("LLM enrichment unavailable" in line
                        for line in result["agent_logs"])
@@ -321,6 +322,27 @@ class TestWebsiteSeverityIsNotTheModelsToChange:
         assert vulns[0]["category"] == "A01:2021-Broken Access Control"
         assert vulns[0]["cve"] == "CVE-2021-1234"
         assert vulns[0]["severity"] == "MEDIUM"
+
+    def test_scanner_severities_are_not_inflated(self, monkeypatch):
+        """
+        Measured on a self-scan: the model promoted every Semgrep WARNING to
+        HIGH, turning 1 HIGH / 12 MEDIUM / 24 LOW into 15 HIGH / 0 MEDIUM /
+        23 LOW and the score from 60 to 70. Semgrep's rating is the rule
+        author's, and anyone can run Semgrep and compare.
+        """
+        raw = [{"source": "semgrep", "file": "a.py", "line": 1,
+                "severity": "WARNING", "description": "mutable tag"}]
+
+        class _Response:
+            content = ('[{"id": "VULN-001", "severity": "HIGH", '
+                       '"category": "A05:2021-Security Misconfiguration", '
+                       '"description": "Supply chain risk"}]')
+
+        monkeypatch.setattr(orchestrator, "invoke_llm", lambda *a, **k: _Response())
+        vulns = orchestrator.vuln_analyzer_node(
+            {"raw_findings": raw, "scan_id": "t"})["vulnerabilities"]
+        assert vulns[0]["severity"] == "MEDIUM", "WARNING maps to MEDIUM, not HIGH"
+        assert vulns[0]["description"] == "Supply chain risk", "prose is still the model's"
 
     def test_short_form_ids_still_match(self, monkeypatch):
         """Observed on a repo scan: the model numbers VULN-1, the baseline VULN-001."""
