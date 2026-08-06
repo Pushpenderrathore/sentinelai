@@ -6,9 +6,12 @@ service to known vulnerabilities — similar to Shodan's basic view.
 
 from __future__ import annotations
 
+import logging
 import socket
 import concurrent.futures
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 TIMEOUT = 1.5  # seconds per port probe
 
@@ -245,7 +248,9 @@ def _probe_port(host: str, port: int) -> tuple[int, bool, str]:
                 data = s.recv(256)
                 banner = data.decode("utf-8", errors="replace").split("\n")[0].strip()
             except Exception:
-                pass
+                # No banner is normal: plenty of services stay silent until
+                # spoken to in their own protocol. The port is still open.
+                logger.debug("No banner from %s:%s", host, port, exc_info=True)
             return port, True, banner
     except (socket.timeout, ConnectionRefusedError, OSError):
         return port, False, ""

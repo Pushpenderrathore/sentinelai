@@ -94,8 +94,13 @@ def _detect_ram_gb() -> float:
     # exist here, so without this every Mac reports 0 GB and is misclassified
     # as the lowest tier.
     try:
-        import subprocess
-        out = subprocess.run(["sysctl", "-n", "hw.memsize"],
+        import shutil
+        import subprocess  # nosec B404 - fixed argument list, no shell
+        sysctl = shutil.which("sysctl")
+        if not sysctl:
+            raise OSError("sysctl not found")
+        # nosec B603 - resolved executable, constant arguments, no user input.
+        out = subprocess.run([sysctl, "-n", "hw.memsize"],  # nosec B603
                              capture_output=True, text=True, timeout=5)
         if out.returncode == 0 and out.stdout.strip().isdigit():
             return int(out.stdout.strip()) / (1024 ** 3)
@@ -137,7 +142,7 @@ def _detect_cpu_cores() -> int:
         if count:
             return count
     except Exception:
-        pass
+        logger.debug("system_detector: cpu_count() failed", exc_info=True)
     logger.warning("system_detector: could not read CPU count — assuming 1")
     return 1
 
@@ -163,20 +168,20 @@ def _detect_gpu() -> bool:
         if platform.system() == "Darwin" and platform.machine() == "arm64":
             return True
     except Exception:
-        pass
+        logger.debug("system_detector: platform probe failed", exc_info=True)
     # nvidia-smi binary present?
     try:
         import shutil
         if shutil.which("nvidia-smi"):
             return True
     except Exception:
-        pass
+        logger.debug("system_detector: nvidia-smi probe failed", exc_info=True)
     # ROCm
     try:
         if shutil.which("rocm-smi"):
             return True
     except Exception:
-        pass
+        logger.debug("system_detector: rocm-smi probe failed", exc_info=True)
     return False
 
 

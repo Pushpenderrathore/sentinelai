@@ -4,15 +4,24 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import shutil
+import subprocess  # nosec B404 - argument list only, never shell=True
 import sys
 
 
 def _bandit_bin() -> str:
+    """
+    Absolute path to bandit: the venv copy if there is one, else whatever is on
+    PATH. Resolved rather than invoked by bare name, so an executable planted
+    earlier on PATH cannot take its place.
+    """
     venv_bin = os.path.join(os.path.dirname(sys.executable), "bandit")
     if os.path.isfile(venv_bin):
         return venv_bin
-    return "bandit"
+    resolved = shutil.which("bandit")
+    if not resolved:
+        raise RuntimeError("bandit is not installed or not on PATH")
+    return resolved
 
 
 def _relative(path: str, repo_path: str) -> str:
@@ -27,7 +36,8 @@ def _relative(path: str, repo_path: str) -> str:
 
 
 def run_bandit(repo_path: str) -> list[dict]:
-    result = subprocess.run(
+    # nosec B603 - resolved executable, fixed argument list, no shell.
+    result = subprocess.run(  # nosec B603
         [_bandit_bin(), "-r", repo_path, "-f", "json", "-q"],
         capture_output=True,
         text=True,

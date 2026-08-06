@@ -8,11 +8,25 @@ import json
 import logging
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404 - every call below passes an argument list, never shell=True
 import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _git_bin() -> str:
+    """
+    Absolute path to git.
+
+    Invoking "git" by name resolves through PATH, so anything earlier on the
+    path runs instead. Resolve it once and fail with a clear message rather
+    than executing whatever is found.
+    """
+    resolved = shutil.which("git")
+    if not resolved:
+        raise RuntimeError("git is not installed or not on PATH")
+    return resolved
 
 
 def _repo_dest(scan_id: str) -> str:
@@ -25,9 +39,11 @@ def clone_repo(repo_url: str, scan_id: str) -> str:
 
     dest = _repo_dest(scan_id)
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}  # never hang on a credential prompt
-    subprocess.run(
+    # nosec B603 - fixed argument list, no shell. repo_url is constrained to
+    # https:// above, so it cannot be read as a git option.
+    subprocess.run(  # nosec B603
         [
-            "git", "clone",
+            _git_bin(), "clone",
             "--depth", "1",        # shallow — only latest commit
             "--single-branch",     # skip all other branches
             "--no-tags",           # skip tag objects

@@ -625,18 +625,25 @@ def _scan_github(state: ScanState) -> dict:
         # and one patch proposed "fixing" the 0.0.0.0 fixture that proves the
         # URL guard blocks 0.0.0.0. Counted and logged rather than hidden,
         # because a credential committed in a test file is still a leak.
-        from tools.scan_exclusions import include_tests, partition_test_findings
+        from tools.scan_exclusions import include_tests, partition_findings
 
+        raw_findings, test_findings, vendor_findings = partition_findings(raw_findings)
+        if vendor_findings:
+            # Always excluded: the owner cannot patch a dependency's source,
+            # and vulnerable dependency *versions* are audited separately.
+            logs.append(
+                f"[Scanner] Excluded {len(vendor_findings)} findings in vendored "
+                f"dependencies and build output"
+            )
         if include_tests():
+            raw_findings.extend(test_findings)
             logs.append("[Scanner] Scanning test code as well (SCAN_INCLUDE_TESTS)")
-        else:
-            raw_findings, test_findings = partition_test_findings(raw_findings)
-            if test_findings:
-                logs.append(
-                    f"[Scanner] Excluded {len(test_findings)} findings in test "
-                    f"files — test code is unsafe by design "
-                    f"(set SCAN_INCLUDE_TESTS=true to include them)"
-                )
+        elif test_findings:
+            logs.append(
+                f"[Scanner] Excluded {len(test_findings)} findings in test "
+                f"files — test code is unsafe by design "
+                f"(set SCAN_INCLUDE_TESTS=true to include them)"
+            )
 
         logs.append(f"[Scanner] Total raw findings: {len(raw_findings)}")
 

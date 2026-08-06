@@ -11,7 +11,8 @@ export interface WSMessage {
 
 /**
  * Generic WebSocket hook.
- * - `url` — full ws:// URL; pass null to skip connection
+ * - `url` — full WebSocket URL (use a secure `wss` scheme in production);
+ *   pass null to skip connection
  * - `onMessage` — optional callback for every non-ping message
  */
 export function useWebSocket(

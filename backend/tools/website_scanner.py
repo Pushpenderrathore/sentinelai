@@ -5,6 +5,7 @@ Checks security headers, SSL cert, exposed files, CORS, cookies, and server info
 
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 import socket
@@ -17,6 +18,8 @@ import urllib3
 from requests.exceptions import RequestException
 
 from .url_guard import assert_safe_target
+
+logger = logging.getLogger(__name__)
 
 # Probes against scan targets intentionally use verify=False — silence the noise
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -569,6 +572,10 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
             if not validator(r):
                 continue
         except Exception:
+            # A validator that blows up cannot confirm the signature, so the
+            # path is not reported. Suppressing a finding silently is exactly
+            # the failure mode this scanner exists to avoid, so record it.
+            logger.debug("Validator failed for %s%s", base_url, path, exc_info=True)
             continue
         findings.append(_f(f"{base_url}{path}", sev,
                           "A05:2021-Security Misconfiguration",
@@ -601,7 +608,9 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
                                           f"SSL certificate expires in {days_left} days",
                                           f"notAfter: {expires_str}"))
         except Exception:
-            pass
+            # Certificate inspection is best-effort: the site is still scanned
+            # without it, but a missing expiry check should not be invisible.
+            logger.debug("TLS certificate inspection failed for %s", url, exc_info=True)
 
     return findings
 

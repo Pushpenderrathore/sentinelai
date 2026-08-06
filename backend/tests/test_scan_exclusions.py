@@ -79,6 +79,48 @@ class TestPartition:
         assert len(app) == 1
 
 
+class TestIsDependencyPath:
+    """
+    A local Bandit run over this project reported 2029 findings, almost all of
+    them inside backend/.venv. That is somebody else's code: the owner cannot
+    patch it, and it buries their own findings.
+    """
+
+    @pytest.mark.parametrize("path", [
+        "backend/.venv/lib/python3.11/site-packages/_pytest/_code/code.py",
+        "frontend/node_modules/react/index.js",
+        "vendor/github.com/pkg/errors/errors.go",
+        "frontend/.next/server/app.js",
+        "build/output.js",
+        "third_party/lib.py",
+    ])
+    def test_vendored_code_is_recognised(self, path):
+        assert scan_exclusions.is_dependency_path(path) is True
+
+    @pytest.mark.parametrize("path", [
+        "backend/agents/orchestrator.py",
+        "frontend/lib/ws.ts",
+        "backend/tools/build_report.py",
+    ])
+    def test_own_code_is_not(self, path):
+        assert scan_exclusions.is_dependency_path(path) is False
+
+    def test_vendored_wins_over_test(self):
+        """A dependency's own tests are still the dependency's problem."""
+        app, tests, deps = scan_exclusions.partition_findings(
+            [{"file": "node_modules/foo/tests/test_x.py"}])
+        assert (len(app), len(tests), len(deps)) == (0, 0, 1)
+
+    def test_three_way_split_loses_nothing(self):
+        findings = [
+            {"file": "backend/agents/orchestrator.py"},
+            {"file": "backend/tests/test_x.py"},
+            {"file": "backend/.venv/lib/site-packages/x.py"},
+        ]
+        app, tests, deps = scan_exclusions.partition_findings(findings)
+        assert len(app) == 1 and len(tests) == 1 and len(deps) == 1
+
+
 class TestIncludeTestsOverride:
     def test_off_by_default(self, monkeypatch):
         monkeypatch.delenv("SCAN_INCLUDE_TESTS", raising=False)
@@ -112,6 +154,8 @@ class TestScannerAppliesTheExclusion:
              "line": 1, "severity": "MEDIUM", "description": "real"},
             {"source": "bandit", "file": "backend/tests/test_url_guard.py",
              "line": 2, "severity": "LOW", "description": "fixture"},
+            {"source": "bandit", "file": "backend/.venv/lib/site-packages/x.py",
+             "line": 3, "severity": "HIGH", "description": "dependency"},
         ])
         monkeypatch.setattr(semgrep_runner, "run_semgrep", lambda p: [])
         return orchestrator._scan_github({"repo_url": "https://github.com/a/b",
@@ -132,6 +176,15 @@ class TestScannerAppliesTheExclusion:
     def test_the_override_keeps_them(self, monkeypatch, tmp_path):
         monkeypatch.setenv("SCAN_INCLUDE_TESTS", "true")
         result = self._scan(monkeypatch, tmp_path)
-        assert len(result["raw_findings"]) == 2
+        files = [f["file"] for f in result["raw_findings"]]
+        assert "backend/tests/test_url_guard.py" in files
         assert any("Scanning test code as well" in line
                    for line in result["agent_logs"])
+
+    def test_vendored_findings_are_dropped_even_with_the_override(self, monkeypatch, tmp_path):
+        """A dependency's source is never the owner's to patch."""
+        monkeypatch.setenv("SCAN_INCLUDE_TESTS", "true")
+        result = self._scan(monkeypatch, tmp_path)
+        files = [f["file"] for f in result["raw_findings"]]
+        assert not any(".venv" in f for f in files)
+        assert any("vendored dependencies" in line for line in result["agent_logs"])

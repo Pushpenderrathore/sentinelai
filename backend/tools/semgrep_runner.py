@@ -4,15 +4,24 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import shutil
+import subprocess  # nosec B404 - argument list only, never shell=True
 import sys
 
 
 def _semgrep_bin() -> str:
+    """
+    Absolute path to semgrep: the venv copy if there is one, else whatever is on
+    PATH. Resolved rather than invoked by bare name, so an executable planted
+    earlier on PATH cannot take its place.
+    """
     venv_bin = os.path.join(os.path.dirname(sys.executable), "semgrep")
     if os.path.isfile(venv_bin):
         return venv_bin
-    return "semgrep"
+    resolved = shutil.which("semgrep")
+    if not resolved:
+        raise RuntimeError("semgrep is not installed or not on PATH")
+    return resolved
 
 
 def _relative(path: str, repo_path: str) -> str:
@@ -47,7 +56,8 @@ def _semgrep_config() -> str:
 
 
 def run_semgrep(repo_path: str) -> list[dict]:
-    result = subprocess.run(
+    # nosec B603 - resolved executable, fixed argument list, no shell.
+    result = subprocess.run(  # nosec B603
         [_semgrep_bin(), "--config", _semgrep_config(), repo_path,
          "--json", "--quiet"],
         capture_output=True,

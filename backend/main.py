@@ -152,6 +152,21 @@ async def _broadcast_global(msg: dict) -> None:
         await q.put(msg)
 
 
+async def _close_quietly(websocket: WebSocket, context: str) -> None:
+    """
+    Close a WebSocket that is probably already gone.
+
+    Every WS endpoint ends with this in a finally block. Failing to close a
+    socket the client has already dropped is expected and not worth an error,
+    but swallowing it silently means a genuine transport fault leaves no trace
+    at all, so it is recorded at debug level.
+    """
+    try:
+        await websocket.close()
+    except Exception:
+        logger.debug("WS close failed for %s (already closed?)", context, exc_info=True)
+
+
 # ══════════════════════════════════════════════════════════════
 #  App lifecycle
 # ══════════════════════════════════════════════════════════════
@@ -512,10 +527,7 @@ async def ws_scan_feed(websocket: WebSocket, scan_id: str) -> None:
     except Exception as exc:
         logger.error("WS error for scan %s: %s", scan_id, exc)
     finally:
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        await _close_quietly(websocket, f"scan {scan_id}")
         logger.info("WS connection closed for scan %s", scan_id)
 
 
@@ -875,12 +887,9 @@ async def ws_exam_events(websocket: WebSocket, exam_id: str) -> None:
         try:
             await websocket.send_json({"type": "error", "message": "Internal error processing exam events"})
         except Exception:
-            pass
+            logger.debug("Could not deliver the error frame for exam %s", exam_id, exc_info=True)
     finally:
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        await _close_quietly(websocket, f"exam events {exam_id}")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -921,10 +930,7 @@ async def ws_exam_monitor(websocket: WebSocket, exam_id: str) -> None:
     finally:
         if q in entry["monitor_queues"]:
             entry["monitor_queues"].remove(q)
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        await _close_quietly(websocket, f"exam monitor {exam_id}")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -946,7 +952,9 @@ async def ws_exam_monitor_all(websocket: WebSocket) -> None:
         for snapshot in list(_latest_trust.values()):
             await websocket.send_json(snapshot)
     except Exception:
-        pass
+        # The dashboard stays blank until the next live event, which looks like
+        # "no students connected". Worth a warning rather than nothing.
+        logger.warning("Could not replay trust snapshots to a new dashboard", exc_info=True)
 
     try:
         while True:
@@ -966,10 +974,7 @@ async def ws_exam_monitor_all(websocket: WebSocket) -> None:
     finally:
         if q in _global_monitor_queues:
             _global_monitor_queues.remove(q)
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        await _close_quietly(websocket, "class-wide monitor")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1013,7 +1018,4 @@ async def ws_exam_analysis(websocket: WebSocket, exam_id: str) -> None:
     except WebSocketDisconnect:
         logger.info("Analysis WS disconnected for exam %s", exam_id)
     finally:
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        await _close_quietly(websocket, f"exam analysis {exam_id}")

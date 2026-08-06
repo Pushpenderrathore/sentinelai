@@ -30,6 +30,17 @@ _TEST_FILE_SUFFIXES = ("_test.py", "_spec.py", ".test.js", ".test.ts", ".test.ts
                        ".spec.js", ".spec.ts", ".spec.tsx")
 _TEST_FILENAMES = frozenset({"conftest.py"})
 
+# Vendored dependencies and build output. This is somebody else's code: the
+# owner cannot patch it, and a repo with a committed node_modules or vendor
+# directory would otherwise bury its own findings under thousands from its
+# dependencies. Dependency *versions* are audited separately (pip/npm audit);
+# this only suppresses source-level findings inside them.
+DEPENDENCY_DIRECTORIES = frozenset({
+    ".venv", "venv", "env", "virtualenv", "site-packages",
+    "node_modules", "bower_components", "vendor", "third_party",
+    "dist", "build", ".tox", ".eggs", ".next", ".nuxt", "target",
+})
+
 
 def include_tests() -> bool:
     """True when the caller has asked for test code to be scanned anyway."""
@@ -54,9 +65,31 @@ def is_test_path(path: str) -> bool:
     return filename.endswith(_TEST_FILE_SUFFIXES)
 
 
+def is_dependency_path(path: str) -> bool:
+    """True when a repo-relative path is vendored dependency or build output."""
+    if not path:
+        return False
+    parts = path.replace("\\", "/").strip("/").split("/")
+    return any(part.lower() in DEPENDENCY_DIRECTORIES for part in parts[:-1])
+
+
 def partition_test_findings(findings: list[dict]) -> tuple[list[dict], list[dict]]:
     """Split findings into (application code, test code)."""
     application, tests = [], []
     for finding in findings:
         (tests if is_test_path(finding.get("file", "")) else application).append(finding)
     return application, tests
+
+
+def partition_findings(findings: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
+    """Split findings into (application code, test code, vendored code)."""
+    application, tests, dependencies = [], [], []
+    for finding in findings:
+        path = finding.get("file", "")
+        if is_dependency_path(path):
+            dependencies.append(finding)
+        elif is_test_path(path):
+            tests.append(finding)
+        else:
+            application.append(finding)
+    return application, tests, dependencies
