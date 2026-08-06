@@ -734,15 +734,29 @@ def _scan_website(state: ScanState) -> dict:
         logs.append(f"[Scanner] HTTP checks complete — {len(raw_findings)} raw findings")
         logs.append(f"[Scanner] Severity breakdown: {by_sev}")
 
-        # Port scan
-        host = urlparse(state["repo_url"]).hostname or state["repo_url"]
-        from tools.port_scanner import COMMON_PORTS as _CP
-        logs.append(f"[Scanner] Starting port scan on {host} ({len(_CP)} common ports)…")
-        # On an HTTPS site, 443 is the site itself and 80 exists to redirect to
-        # it. Both are the website working as intended, not exposures.
-        from tools.port_scanner import WEB_SERVICE_PORTS
-        skip = WEB_SERVICE_PORTS if urlparse(state["repo_url"]).scheme == "https" else frozenset()
-        port_findings = scan_ports(host, skip_ports=skip, cdn=meta.get("cdn"))
+        # Port scan, against authorised hosts only. Reading a site's headers is
+        # what any browser does; connecting to 25 of its ports is unauthorised
+        # testing when the host is not yours, and a scan box that accepts any
+        # URL should not leave that decision to whoever is typing.
+        from tools.scan_authorisation import is_authorised, refusal_reason
+
+        # The host actually served, so a redirect cannot move the scan onto a
+        # third party that was never authorised.
+        scanned_url = meta.get("final_url") or state["repo_url"]
+        host = urlparse(scanned_url).hostname or scanned_url
+        port_findings: list[dict] = []
+
+        if not is_authorised(host):
+            logs.append(f"[Scanner] Port scan skipped — {refusal_reason(host)}")
+        else:
+            from tools.port_scanner import COMMON_PORTS as _CP
+            logs.append(f"[Scanner] {host} is an authorised target — port scanning "
+                        f"({len(_CP)} common ports)…")
+            # On an HTTPS site, 443 is the site itself and 80 exists to redirect to
+            # it. Both are the website working as intended, not exposures.
+            from tools.port_scanner import WEB_SERVICE_PORTS
+            skip = WEB_SERVICE_PORTS if urlparse(scanned_url).scheme == "https" else frozenset()
+            port_findings = scan_ports(host, skip_ports=skip, cdn=meta.get("cdn"))
 
         open_ports = [p for p in port_findings if "port" in p]
         critical_ports = [p for p in open_ports if p["severity"] in ("CRITICAL", "HIGH")]
@@ -750,7 +764,7 @@ def _scan_website(state: ScanState) -> dict:
         if open_ports:
             port_list = ", ".join(f"{p['port']}/{p['service']}" for p in open_ports)
             logs.append(f"[Scanner] Open ports ({len(open_ports)}): {port_list}")
-        else:
+        elif port_findings or is_authorised(host):
             logs.append(f"[Scanner] No common high-risk ports found open")
 
         if critical_ports:
