@@ -62,6 +62,77 @@ def _v_server_status(r) -> bool:
     t = r.text[:3000]
     return any(k in t for k in ("Apache Server Status", "Apache Server Information", "Server Version:"))
 
+def _v_metrics(r) -> bool:
+    """Prometheus exposition format: '# HELP name ...' / '# TYPE name ...'."""
+    if _looks_html(r):
+        return False
+    return re.search(r"(?m)^#\s*(HELP|TYPE)\s+\w+", r.text[:4000]) is not None
+
+
+def _v_actuator(r) -> bool:
+    """Spring Boot Actuator index: a JSON document of _links to endpoints."""
+    t = r.text[:4000]
+    return '"_links"' in t and ("self" in t or "health" in t)
+
+
+def _v_actuator_env(r) -> bool:
+    t = r.text[:4000]
+    return '"propertySources"' in t or '"activeProfiles"' in t
+
+
+def _v_pprof(r) -> bool:
+    t = r.text[:4000]
+    return "/debug/pprof/" in t and ("goroutine" in t or "heap" in t)
+
+
+def _v_svn(r) -> bool:
+    if _looks_html(r):
+        return False
+    t = r.text[:400].strip()
+    return t.startswith(("8", "9", "10", "11", "12")) and "dir" in r.text[:2000]
+
+
+def _v_laravel_telescope(r) -> bool:
+    t = r.text[:6000]
+    return "telescope" in t.lower() and ("Telescope" in t or "laravel" in t.lower())
+
+
+def _v_symfony_profiler(r) -> bool:
+    t = r.text[:6000]
+    return "Symfony Profiler" in t or "sf-profiler" in t or "_profiler" in t
+
+
+# Autoindex pages from every common server. Juice Shop leaves /ftp browsable
+# with a confidential document in it, and no signature-based check would ever
+# find that: the exposure is the listing itself, not a known filename.
+# Every mainstream listing generator announces itself, so recognition is by
+# marker only. A "mostly relative links" heuristic was tried and dropped: an
+# ordinary index page with a few relative links would trip it, and a false
+# "Directory listing exposed" is exactly the kind of confident nonsense this
+# scanner keeps having to be corrected for.
+_DIR_LISTING_MARKERS = (
+    "index of /",                 # Apache, nginx autoindex, Caddy
+    "listing directory ",         # Express serve-index, which is what Juice Shop uses
+    "<title>directory listing",
+    "directory listing for",      # Python http.server, Tornado
+    "parent directory</a>",       # IIS
+    "[to parent directory]",      # IIS classic
+)
+
+_STYLE_SCRIPT_RE = re.compile(r"<(style|script)\b.*?</\1>", re.DOTALL | re.IGNORECASE)
+
+
+def _v_directory_listing(r) -> bool:
+    if r.headers.get("content-type", "").lower().find("html") == -1 and not _looks_html(r):
+        return False
+
+    # serve-index inlines a full stylesheet before the listing, so the links sit
+    # well past any small window. Drop style and script blocks first and look at
+    # the real markup.
+    lowered = _STYLE_SCRIPT_RE.sub(" ", r.text[:200_000]).lower()
+    return any(marker in lowered for marker in _DIR_LISTING_MARKERS)
+
+
 def _v_htaccess(r) -> bool:
     if _looks_html(r):
         return False
@@ -128,6 +199,21 @@ SENSITIVE_PATHS = [
     ("/administrator",    "LOW",      _v_login_panel,  "Administrator login panel reachable"),
     ("/wp-admin",         "LOW",      _v_login_panel,  "WordPress admin panel reachable"),
     ("/phpmyadmin",       "LOW",      _v_phpmyadmin,   "phpMyAdmin panel reachable"),
+    # The list above is PHP/Apache era. These are what actually leaks now, and
+    # scanning OWASP Juice Shop is what exposed the gap: it left /ftp browsable
+    # and /metrics public, and neither was probed.
+    ("/metrics",          "MEDIUM",   _v_metrics,      "Prometheus metrics exposed publicly (internal telemetry)"),
+    ("/actuator",         "MEDIUM",   _v_actuator,     "Spring Boot Actuator endpoints publicly listed"),
+    ("/actuator/env",     "CRITICAL", _v_actuator_env, "Spring Boot Actuator env exposed (configuration and secrets)"),
+    ("/debug/pprof/",     "MEDIUM",   _v_pprof,        "Go pprof profiling endpoints publicly accessible"),
+    ("/.svn/entries",     "HIGH",     _v_svn,          ".svn metadata exposed (source disclosure)"),
+    ("/telescope",        "HIGH",     _v_laravel_telescope, "Laravel Telescope debug console reachable"),
+    ("/_profiler",        "HIGH",     _v_symfony_profiler,  "Symfony profiler reachable (requests, config, queries)"),
+    # Browsable directories. Reported by the listing itself, not a filename.
+    ("/ftp",              "HIGH",     _v_directory_listing, "Directory listing exposed"),
+    ("/files",            "MEDIUM",   _v_directory_listing, "Directory listing exposed"),
+    ("/uploads",          "MEDIUM",   _v_directory_listing, "Directory listing exposed"),
+    ("/backup",           "HIGH",     _v_directory_listing, "Directory listing exposed"),
 ]
 
 # ── Headers a page can deliver from its own markup ────────────────────────────

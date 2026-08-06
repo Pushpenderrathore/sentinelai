@@ -856,6 +856,72 @@ class TestGithubItselfIsNotGithubPages:
             assert website_scanner.detect_static_host({"server": "github.com"}, host) is None
 
 
+# ── Exposures that actually leak in modern stacks ────────────────────────────
+
+class TestModernExposureProbes:
+    """
+    The probe list was PHP, WordPress and Apache era. Scanning OWASP Juice Shop
+    exposed the gap: it leaves /ftp browsable with a document that says
+    "This document is confidential!" in it, and serves Prometheus metrics on
+    /metrics, and the scanner reported neither.
+    """
+
+    @staticmethod
+    def _resp(body, content_type="text/html"):
+        return _Resp(200, {"content-type": content_type}, body)
+
+    def test_prometheus_metrics_are_recognised(self):
+        body = "# HELP http_requests_total Total requests\n# TYPE http_requests_total counter\n"
+        assert website_scanner._v_metrics(self._resp(body, "text/plain")) is True
+
+    def test_an_html_page_is_not_metrics(self):
+        assert website_scanner._v_metrics(self._resp("<html><body>hi</body></html>")) is False
+
+    def test_actuator_env_is_recognised(self):
+        body = '{"activeProfiles":["prod"],"propertySources":[{"name":"systemEnv"}]}'
+        assert website_scanner._v_actuator_env(self._resp(body, "application/json")) is True
+
+    def test_serve_index_listing_is_recognised(self):
+        """The exact shape Juice Shop serves on /ftp."""
+        body = ("<!DOCTYPE html><html><head><title>listing directory /ftp</title>"
+                "<style>body { padding: 80px }</style></head><body>"
+                "<ul><li><a href=\"acquisitions.md\">acquisitions.md</a></li></ul></body></html>")
+        assert website_scanner._v_directory_listing(self._resp(body)) is True
+
+    def test_apache_autoindex_is_recognised(self):
+        body = "<html><head><title>Index of /files</title></head><body><h1>Index of /files</h1></body></html>"
+        assert website_scanner._v_directory_listing(self._resp(body)) is True
+
+    def test_python_http_server_listing_is_recognised(self):
+        body = "<html><head><title>Directory listing for /</title></head><body></body></html>"
+        assert website_scanner._v_directory_listing(self._resp(body)) is True
+
+    def test_an_ordinary_page_with_relative_links_is_not_a_listing(self):
+        """
+        A "mostly relative links" heuristic was tried and dropped: it called
+        pages like this a directory listing.
+        """
+        body = ("<html><body><nav><a href=\"about.html\">About</a>"
+                "<a href=\"blog.html\">Blog</a><a href=\"contact.html\">Contact</a>"
+                "<a href=\"cv.html\">CV</a><a href=\"projects.html\">Projects</a>"
+                "</nav></body></html>")
+        assert website_scanner._v_directory_listing(self._resp(body)) is False
+
+    def test_a_json_api_is_not_a_listing(self):
+        assert website_scanner._v_directory_listing(
+            self._resp('{"items": []}', "application/json")) is False
+
+    def test_the_new_paths_are_actually_probed(self):
+        paths = {p for p, _, _, _ in website_scanner.SENSITIVE_PATHS}
+        assert {"/metrics", "/actuator/env", "/ftp", "/debug/pprof/"} <= paths
+
+    def test_actuator_env_is_critical(self):
+        """It returns the environment, which is where the secrets are."""
+        sev = next(s for p, s, _, _ in website_scanner.SENSITIVE_PATHS
+                   if p == "/actuator/env")
+        assert sev == "CRITICAL"
+
+
 def json_dump(obj) -> str:
     import json
     return json.dumps(obj)
