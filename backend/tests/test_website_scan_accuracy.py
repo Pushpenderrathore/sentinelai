@@ -394,6 +394,19 @@ class TestPatchesUseRealSource:
         result, _ = self._fix(monkeypatch, tmp_path, reply)
         assert result["patches"][0]["patched_code"] == "    safe(cmd)"
 
+    def test_an_array_reply_does_not_put_a_list_in_patches(self, monkeypatch, tmp_path):
+        """
+        Seen on a repo scan: asked for one object, the model returned an array,
+        and the list itself was appended to patches[]. Every consumer that
+        expects a patch object breaks on that.
+        """
+        reply = ('[{"vuln_id": "VULN-001", "file": "app.py", '
+                 '"patched_code": "safe(cmd)", "explanation": "x"}]')
+        result, _ = self._fix(monkeypatch, tmp_path, reply)
+        patch = result["patches"][0]
+        assert isinstance(patch, dict)
+        assert patch["patched_code"] == "safe(cmd)"
+
     def test_an_unreadable_file_yields_no_diff_at_all(self, monkeypatch, tmp_path):
         """Nothing to verify against, so no diff may be presented as verified."""
         result, _ = self._fix(monkeypatch, tmp_path, self.REPLY, line=999)

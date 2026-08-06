@@ -607,6 +607,25 @@ def _scan_github(state: ScanState) -> dict:
         semgrep_results = run_semgrep(repo_path)
         raw_findings.extend(semgrep_results)
         logs.append(f"[Scanner] Semgrep: {len(semgrep_results)} issues")
+
+        # Test code does unsafe things deliberately, so findings against it are
+        # mostly noise: a self-scan produced 231 findings, 218 of them in tests,
+        # and one patch proposed "fixing" the 0.0.0.0 fixture that proves the
+        # URL guard blocks 0.0.0.0. Counted and logged rather than hidden,
+        # because a credential committed in a test file is still a leak.
+        from tools.scan_exclusions import include_tests, partition_test_findings
+
+        if include_tests():
+            logs.append("[Scanner] Scanning test code as well (SCAN_INCLUDE_TESTS)")
+        else:
+            raw_findings, test_findings = partition_test_findings(raw_findings)
+            if test_findings:
+                logs.append(
+                    f"[Scanner] Excluded {len(test_findings)} findings in test "
+                    f"files — test code is unsafe by design "
+                    f"(set SCAN_INCLUDE_TESTS=true to include them)"
+                )
+
         logs.append(f"[Scanner] Total raw findings: {len(raw_findings)}")
 
         return {
@@ -1055,6 +1074,11 @@ Output only valid JSON. No markdown."""
         ])
 
         patch = _parse_json(response.content, None)
+        if isinstance(patch, list):
+            # Asked for one object, answered with an array. Left alone, a list
+            # was appended to patches[] and every consumer that expects a patch
+            # object breaks on it.
+            patch = next((p for p in patch if isinstance(p, dict)), None)
 
         if isinstance(patch, dict) and source:
             # The file is on disk, so the original line is a fact. Whatever the
