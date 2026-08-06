@@ -231,6 +231,99 @@ def _vulns_from_raw_findings(findings: list[dict]) -> list[dict]:
     return vulns
 
 
+# Website findings come from deterministic header checks in our own code: the
+# header is present or it is not. There is nothing for a model to infer, so its
+# severity and wording are not opinions worth taking. Static-analysis findings
+# are different — mapping a Bandit test id to an OWASP category and judging how
+# exploitable it is, is real work the model does well.
+_AUTHORITATIVE_SOURCES = {"website"}
+
+
+def _norm(text: str) -> str:
+    return " ".join((text or "").lower().split())
+
+
+def _match_llm_entry(vuln: dict, by_id: dict, by_desc: dict, by_loc: dict) -> dict | None:
+    """Find the model's version of a finding we already know about."""
+    entry = by_id.get(vuln["id"])
+    if entry is not None:
+        return entry
+
+    desc = _norm(vuln.get("description", ""))
+    if desc in by_desc:
+        return by_desc[desc]
+    for candidate_desc, candidate in by_desc.items():
+        if desc and (desc.startswith(candidate_desc[:60]) or candidate_desc.startswith(desc[:60])):
+            return candidate
+
+    # Only useful for source findings: every website finding shares one URL and
+    # line 0, so location would match all of them to the first entry.
+    if vuln.get("line"):
+        return by_loc.get((vuln.get("file", ""), vuln.get("line")))
+    return None
+
+
+def _merge_llm_enrichment(baseline: list[dict], llm_vulns: list[dict]) -> tuple[list[dict], dict]:
+    """
+    Enrich the scanner's findings with the model's analysis, without letting it
+    change what was found.
+
+    The findings list drove the risk score, so anything the model did to it
+    moved the number: on a live scan it silently dropped one finding and
+    promoted another from LOW to MEDIUM, and the report disagreed with the
+    scanner log directly above it. The scanner's list is the finding set; the
+    model contributes category, CVE, and (for static analysis) severity and
+    prose.
+    """
+    by_id: dict[str, dict] = {}
+    by_desc: dict[str, dict] = {}
+    by_loc: dict[tuple, dict] = {}
+    for entry in llm_vulns:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("id"):
+            by_id.setdefault(str(entry["id"]), entry)
+        by_desc.setdefault(_norm(entry.get("description", "")), entry)
+        by_loc.setdefault((str(entry.get("file", "")), entry.get("line", 0)), entry)
+
+    stats = {"enriched": 0, "dropped_by_llm": 0, "severity_kept": 0}
+    merged = []
+
+    for vuln in baseline:
+        entry = _match_llm_entry(vuln, by_id, by_desc, by_loc)
+        result = dict(vuln)
+
+        if entry is None:
+            stats["dropped_by_llm"] += 1
+            merged.append(result)
+            continue
+
+        stats["enriched"] += 1
+        category = entry.get("category")
+        if isinstance(category, str) and category.strip():
+            result["category"] = category.strip()
+        cve = entry.get("cve")
+        if isinstance(cve, str) and cve.strip().upper().startswith("CVE-"):
+            result["cve"] = cve.strip()
+
+        if vuln.get("source") in _AUTHORITATIVE_SOURCES:
+            # Severity and wording stay as observed. The website descriptions
+            # are deliberately phrased (the meta-CSP note, the platform
+            # constraint) and a rewrite loses that.
+            stats["severity_kept"] += 1
+        else:
+            severity = (entry.get("severity") or "").upper()
+            if severity in _VALID_SEVERITIES:
+                result["severity"] = severity
+            description = entry.get("description")
+            if isinstance(description, str) and description.strip():
+                result["description"] = description.strip()
+
+        merged.append(result)
+
+    return merged, stats
+
+
 def _recommendations_from_vulns(vulnerabilities: list[dict], limit: int = 3) -> list[str]:
     """
     Derive action items from the findings themselves.
@@ -605,19 +698,21 @@ Output only a valid JSON array. No markdown."""),
     if not isinstance(llm_vulns, list):
         llm_vulns = []
 
-    degraded = False
-    if not llm_vulns and other_findings:
-        # The scanners found real issues but the LLM gave us nothing usable.
-        # Report the raw findings rather than an inaccurate "no vulnerabilities".
-        llm_vulns = _vulns_from_raw_findings(other_findings)
-        degraded = True
+    # The scanner's output is the finding set. The model enriches it; it does
+    # not get to decide what was found. Previously its array *was* the result,
+    # so a finding it forgot to copy simply vanished from the report.
+    baseline = _vulns_from_raw_findings(other_findings)
+    analyzed, merge_stats = _merge_llm_enrichment(baseline, llm_vulns)
+
+    degraded = bool(other_findings) and merge_stats["enriched"] == 0
+    if degraded:
         logger.warning(
             "vuln_analyzer: LLM returned no usable vulnerabilities for %d raw "
             "findings — falling back to deterministic mapping",
             len(other_findings),
         )
 
-    vulns = port_vulns + llm_vulns
+    vulns = port_vulns + analyzed
 
     severity_counts: dict[str, int] = {}
     for v in vulns:
@@ -633,10 +728,20 @@ Output only a valid JSON array. No markdown."""),
     ]
     if port_vulns:
         logs.append(f"[VulnAnalyzer] Port exposures: {len(port_vulns)} open ports mapped to CVEs/CWEs")
+    if merge_stats["severity_kept"]:
+        logs.append(
+            f"[VulnAnalyzer] {merge_stats['severity_kept']} findings kept the "
+            f"scanner's severity (deterministic checks, not model judgement)"
+        )
+    if merge_stats["dropped_by_llm"]:
+        logs.append(
+            f"[VulnAnalyzer] {merge_stats['dropped_by_llm']} findings were "
+            f"missing from the model's output and were kept anyway"
+        )
     if degraded:
         logs.append(
             f"[VulnAnalyzer] LLM enrichment unavailable — reported "
-            f"{len(llm_vulns)} findings directly from Semgrep/Bandit"
+            f"{len(analyzed)} findings directly from Semgrep/Bandit"
         )
 
     return {

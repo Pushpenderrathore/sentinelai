@@ -216,15 +216,25 @@ class TestFindingsSurviveLLMFailure:
         assert any("LLM enrichment unavailable" in line
                    for line in result["agent_logs"])
 
-    def test_good_llm_output_is_used_as_is(self, monkeypatch):
+    def test_good_llm_output_enriches_without_shrinking_the_list(self, monkeypatch):
+        """
+        The model answered for one of the two findings. Its analysis is used,
+        and the finding it skipped is still reported: its array is enrichment,
+        not the result.
+        """
         reply = ('[{"id": "VULN-001", "file": "app/app.py", "line": 261, '
                  '"severity": "CRITICAL", "category": "A03:2021-Injection", '
                  '"description": "SQL injection", "cve": null}]')
         result = self._run(monkeypatch, reply)
-        assert len(result["vulnerabilities"]) == 1
-        assert result["vulnerabilities"][0]["severity"] == "CRITICAL"
+        vulns = result["vulnerabilities"]
+        assert len(vulns) == len(self.RAW)
+        assert vulns[0]["severity"] == "CRITICAL", "model severity is taken for source findings"
+        assert vulns[0]["category"] == "A03:2021-Injection"
+        assert vulns[1]["severity"] == "MEDIUM", "the skipped finding keeps the scanner's severity"
         assert not any("LLM enrichment unavailable" in line
                        for line in result["agent_logs"])
+        assert any("missing from the model's output and were kept anyway" in line
+                   for line in result["agent_logs"])
 
     def test_no_findings_stays_empty(self, monkeypatch):
         """A genuinely clean repo must still report clean."""
@@ -234,6 +244,90 @@ class TestFindingsSurviveLLMFailure:
         monkeypatch.setattr(orchestrator, "invoke_llm", lambda *a, **k: _Response())
         result = orchestrator.vuln_analyzer_node({"raw_findings": [], "scan_id": "t"})
         assert result["vulnerabilities"] == []
+
+
+# ── Severity drift ───────────────────────────────────────────────────────────
+
+class TestWebsiteSeverityIsNotTheModelsToChange:
+    """
+    Measured on a live scan: the scanner produced 6 website findings
+    (2 MEDIUM, 4 LOW) and the analyzer returned 5 (3 MEDIUM, 2 LOW), dropping
+    one finding and promoting another. The risk score is computed from this
+    list, so the model was still moving the headline number after the score
+    itself was made deterministic.
+
+    Website findings come from header checks that are either true or not.
+    """
+
+    RAW = [
+        {"source": "website", "file": "https://example.com/", "line": 0,
+         "severity": "MEDIUM", "description": "Missing security header: X-Frame-Options"},
+        {"source": "website", "file": "https://example.com/", "line": 0,
+         "severity": "LOW", "description": "Missing security header: Permissions-Policy"},
+        {"source": "website", "file": "https://example.com/", "line": 0,
+         "severity": "LOW", "description": "Server information disclosed via 'server': GitHub.com"},
+    ]
+
+    def _run(self, monkeypatch, llm_reply):
+        class _Response:
+            content = llm_reply
+
+        monkeypatch.setattr(orchestrator, "invoke_llm", lambda *a, **k: _Response())
+        return orchestrator.vuln_analyzer_node({"raw_findings": self.RAW, "scan_id": "t"})
+
+    # The drift as observed: one finding missing, one promoted LOW -> MEDIUM.
+    DRIFTED = ('[{"id": "VULN-001", "severity": "MEDIUM", "category": "A05:2021-Security Misconfiguration",'
+               ' "description": "Missing security header: X-Frame-Options", "cve": null},'
+               ' {"id": "VULN-002", "severity": "MEDIUM", "category": "A05:2021-Security Misconfiguration",'
+               ' "description": "Missing security header: Permissions-Policy", "cve": null}]')
+
+    def test_no_finding_is_lost(self, monkeypatch):
+        result = self._run(monkeypatch, self.DRIFTED)
+        assert len(result["vulnerabilities"]) == len(self.RAW)
+
+    def test_promotion_is_refused(self, monkeypatch):
+        vulns = self._run(monkeypatch, self.DRIFTED)["vulnerabilities"]
+        promoted = next(v for v in vulns if "Permissions-Policy" in v["description"])
+        assert promoted["severity"] == "LOW"
+
+    def test_severity_counts_match_the_scanner(self, monkeypatch):
+        vulns = self._run(monkeypatch, self.DRIFTED)["vulnerabilities"]
+        assert orchestrator.compute_risk(vulns)["counts"] == \
+               orchestrator.compute_risk(self.RAW)["counts"]
+
+    def test_the_score_is_unchanged_by_the_model(self, monkeypatch):
+        """The whole point: the model cannot move the headline number."""
+        vulns = self._run(monkeypatch, self.DRIFTED)["vulnerabilities"]
+        assert orchestrator.compute_risk(vulns)["risk_score"] == \
+               orchestrator.compute_risk(self.RAW)["risk_score"]
+
+    def test_the_log_discloses_both_interventions(self, monkeypatch):
+        logs = self._run(monkeypatch, self.DRIFTED)["agent_logs"]
+        assert any("kept the scanner's severity" in line for line in logs)
+        assert any("missing from the model's output" in line for line in logs)
+
+    def test_careful_wording_is_not_rewritten(self, monkeypatch):
+        """The meta-CSP and platform notes are deliberate; a rewrite loses them."""
+        reply = ('[{"id": "VULN-001", "severity": "HIGH", '
+                 '"description": "Implement X-Frame-Options to prevent clickjacking"}]')
+        vulns = self._run(monkeypatch, reply)["vulnerabilities"]
+        assert vulns[0]["description"] == "Missing security header: X-Frame-Options"
+
+    def test_category_and_cve_are_still_taken_from_the_model(self, monkeypatch):
+        """Enrichment the scanner genuinely cannot produce is still welcome."""
+        reply = ('[{"id": "VULN-001", "severity": "HIGH", '
+                 '"category": "A01:2021-Broken Access Control", "cve": "CVE-2021-1234"}]')
+        vulns = self._run(monkeypatch, reply)["vulnerabilities"]
+        assert vulns[0]["category"] == "A01:2021-Broken Access Control"
+        assert vulns[0]["cve"] == "CVE-2021-1234"
+        assert vulns[0]["severity"] == "MEDIUM"
+
+    def test_a_hallucinated_extra_finding_is_ignored(self, monkeypatch):
+        reply = ('[{"id": "VULN-001", "severity": "MEDIUM", "description": "Missing security header: X-Frame-Options"},'
+                 ' {"id": "VULN-099", "severity": "CRITICAL", "description": "Remote code execution in the login form"}]')
+        vulns = self._run(monkeypatch, reply)["vulnerabilities"]
+        assert len(vulns) == len(self.RAW)
+        assert not any("Remote code execution" in v["description"] for v in vulns)
 
 
 # ── Exploit reasoner ─────────────────────────────────────────────────────────
