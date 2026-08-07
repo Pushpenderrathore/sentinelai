@@ -2,15 +2,22 @@
 
 > **FAR AWAY 2026 · Team Zen Hackers · Theme: Agentic & Autonomous Systems**
 
+[![Release](https://img.shields.io/github/v/release/Pushpenderrathore/sentinelai?label=release)](https://github.com/Pushpenderrathore/sentinelai/releases/latest)
+[![CI](https://github.com/Pushpenderrathore/sentinelai/actions/workflows/ci.yml/badge.svg)](https://github.com/Pushpenderrathore/sentinelai/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Pushpenderrathore/sentinelai)](LICENSE)
+
 ![FAR AWAY 2026 - India's Biggest International Hackathon](docs/screenshots/faraway-theme.jpg)
 
 SentinelAI is a multi-agent AI platform that detects threats autonomously - in **source code** and in **online exams** - without requiring human intervention. Two real-world problems. One agentic engine.
+
+**Current release: [v1.0.0](https://github.com/Pushpenderrathore/sentinelai/releases/tag/v1.0.0)** - both scan modes working end to end, 285 tests, six-job CI. The running API reports its own version at `GET /health`.
 
 ---
 
 ## Table of Contents
 
 - [Modules](#modules)
+- [Why the findings can be trusted](#why-the-findings-can-be-trusted)
 - [ML Integration](#ml-integration)
 - [Demo](#demo)
 - [VulnSentinel - Screenshots](#-vulnsentinel---screenshots)
@@ -22,12 +29,14 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously - in *
 - [Setup & Run](#setup--run)
   - [Prerequisites](#prerequisites)
   - [Backend](#1---backend)
+  - [Configuration reference](#configuration-reference)
   - [Offline / Ollama fallback](#offline--ollama-fallback-optional)
   - [Frontend](#2---frontend)
 - [How It Works](#how-it-works)
   - [VulnSentinel - 6-Agent Pipeline](#vulnsentinel---6-agent-pipeline-github--website)
   - [Website Scanner Checks](#website-scanner-checks)
   - [Port Scanner - CVE/CWE Mapping](#port-scanner---cvecwe-mapping)
+- [Testing & CI](#testing--ci)
   - [ExamGuard - Two-Phase System](#examguard---two-phase-system)
   - [Real-time Alert Thresholds](#real-time-alert-thresholds-examguard)
 - [WebSocket Message Protocol](#websocket-message-protocol)
@@ -40,10 +49,40 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously - in *
 ## Modules
 
 ### 🔍 VulnSentinel - Autonomous Code & Website Security Auditor
-Paste a **GitHub repository URL** or any **live website URL**. VulnSentinel auto-detects the target type and routes to the right scanner - static analysis for repos, HTTP security checks for websites. Five specialised AI agents then map findings to OWASP Top 10 and CVEs, reason about real-world exploitability, generate patches or remediation guidance, and produce a full security report - all without a human in the loop.
+Paste a **GitHub repository URL** or any **live website URL**. VulnSentinel auto-detects the target type and routes to the right scanner - Semgrep and Bandit static analysis for repos, HTTP security checks for websites. Five specialised AI agents then map findings to OWASP Top 10 and CVEs, reason about real-world exploitability, generate patches or remediation guidance, and produce a full security report - all without a human in the loop.
+
+The agents enrich the findings; they do not decide them. The risk score is calculated from the evidence, so a rescan reproduces it. See [Why the findings can be trusted](#why-the-findings-can-be-trusted).
 
 ### 🎓 ExamGuard - AI-Powered Exam Integrity Monitor
 A proctoring system that monitors online exams in real time using tab-switch detection, webcam face analysis, **mobile phone detection**, and keystroke dynamics. Immediate rule-based alerts fire the moment suspicious behaviour is detected. Exams are **automatically terminated** after 5 tab switches. When the exam ends, a second agent pipeline performs deep behavioural analysis and generates an integrity report with a verdict.
+
+---
+
+## Why the findings can be trusted
+
+A security tool is only worth as much as its output is defensible. These are the guarantees v1.0.0 makes, each of them visible in the live agent log during a scan.
+
+**The risk score is calculated, not written by the model.** It comes from the severity counts: weighted counts, a per-severity cap so a long tail of LOW findings cannot add up to a crisis, and a floor from the worst finding so a single CRITICAL is not diluted away. The report carries the arithmetic, so anyone can check it:
+
+```
+[ReportGenerator] Severity counts: CRITICAL 0, HIGH 0, MEDIUM 2, LOW 4
+[ReportGenerator] Score contributions: CRITICAL +0, HIGH +0, MEDIUM +16, LOW +8, floor 15
+[ReportGenerator] Risk score: 24/100 (calculated, not model-generated)
+```
+
+The same findings always produce the same score, on Groq or on a local Ollama model. Fix something and rescan, and the number goes down.
+
+**The model enriches findings; it cannot invent or suppress them.** The scanner's output is the finding set. The LLM adds OWASP category, CVE context and prose, and its severity is only accepted where the source is inference rather than measurement. Semgrep, Bandit and HTTP header checks keep their own severity, because those are facts a reviewer can reproduce with the same tools. A failed model call costs enrichment, never findings - and the log says so.
+
+**Findings describe evidence, not assumptions.** Redirects are followed and reported at their destination. A CSP delivered by meta tag counts as applied; one set to report-only is reported as unenforced rather than missing. A header that the host physically cannot set is labelled with that constraint instead of advice you cannot act on. Bot-challenge pages are detected and refused rather than graded.
+
+**Patches are diffed against the real file.** On a repository scan the flagged line is read from the clone, so a patch can never claim to change code that is not there.
+
+**Port scanning requires authorisation.** Ports are probed only against hosts named in `AUTHORISED_SCAN_TARGETS`, and nothing is authorised by default. HTTP checks are unaffected.
+
+### What it does not do
+
+Website mode is a passive configuration and exposure audit. It reads headers, cookies, TLS and known paths; it never sends an attack payload, so it does not find SQL injection, XSS or broken access control in a running app. Code-level vulnerabilities are the repository scanner's job, via Semgrep and Bandit.
 
 ---
 
@@ -288,6 +327,21 @@ bash run.sh
 # → http://localhost:8000/docs  (Swagger UI)
 ```
 
+#### Configuration reference
+
+Everything has a working default; `backend/.env.example` documents each one. The ones worth knowing:
+
+| Variable | Default | What it controls |
+|----------|---------|------------------|
+| `GROQ_API_KEY` | *(unset)* | Cloud inference. Missing or rate-limited, the router falls back to Ollama rather than failing the scan |
+| `AUTHORISED_SCAN_TARGETS` | *(empty)* | Hosts whose ports may be probed. Empty means no host is port scanned |
+| `ALLOW_PRIVATE_TARGETS` | `false` | Allows scanning localhost and private IPs. Also authorises them for port scanning |
+| `SCAN_INCLUDE_TESTS` | `false` | Include findings from test directories. Off by default: test code is unsafe by design, and the excluded count is always logged |
+| `MAX_PATCH_TARGETS` | `10` | Patch generation is one LLM call per finding, so it is capped |
+| `MAX_ENRICHED_FINDINGS` | `25` | How many findings fit one enrichment prompt. The rest are still reported, with the scanner's own severity |
+| `SEMGREP_RULES_PATH` | *(unset)* | Local rule checkout. Without it Semgrep uses `--config auto`, which needs network access |
+| `OLLAMA_NUM_CTX` | `8192` | Ollama's own default of 2048 truncates the JSON answer mid-string on a grounded prompt |
+
 ### Offline / Ollama fallback (optional)
 
 SentinelAI works fully offline using a local Ollama model. No internet or API key required.
@@ -389,32 +443,46 @@ User pastes GitHub repo URL or website URL
                              exposed files (/.env, /.git, /wp-config…) ·
                              CORS · server info disclosure
         │
-   [Vuln Analyzer]     Maps raw findings → structured vulnerabilities with OWASP + CVE context
+   [Vuln Analyzer]     Enriches findings with OWASP + CVE context.
+                       Cannot add, drop or re-rate what the scanner found
         │
-   [Exploit Reasoner]  Explains how each HIGH/CRITICAL vuln can be exploited in the real world
+   [Exploit Reasoner]  Explains how each HIGH/CRITICAL vuln can be exploited in the real world.
+                       Every target is accounted for, from OWASP data if the model fails
         │
-   [Fix Suggester]     Generates code patches or HTTP remediation config
+   [Fix Suggester]     Code patches diffed against the real file, or HTTP remediation config.
+                       States the platform limit when the host cannot apply the fix
         │
-   [Report Generator]  Compiles executive summary · risk score · full JSON report
+   [Report Generator]  Executive summary · calculated risk score · full JSON report
         │
    Results streamed live to the browser via WebSocket
 ```
 
 #### Website scanner checks
 
-| Check | What it finds |
-|-------|--------------|
-| Security headers | Missing CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy |
-| Transport security | HTTP instead of HTTPS · HSTS max-age too short · SSL cert expiry |
-| Cookie security | Missing `Secure`, `HttpOnly`, `SameSite` flags on session cookies |
-| CORS | Wildcard `Access-Control-Allow-Origin: *` |
-| Dangerous methods | TRACE, PUT, DELETE enabled |
-| Sensitive file exposure | `/.env`, `/.git/config`, `/wp-config.php`, `/phpinfo.php`, `/phpmyadmin`, backup SQL files, Swagger UI |
-| Info disclosure | `Server` and `X-Powered-By` headers revealing stack details |
+| Check | What it finds | How it avoids false positives |
+|-------|--------------|-------------------------------|
+| Security headers | Missing CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy | A CSP or Referrer-Policy in a `<meta>` tag counts as applied. A report-only CSP is reported as unenforced, not missing. HSTS is skipped on plain HTTP, where browsers ignore it |
+| Transport security | HTTP instead of HTTPS · HSTS max-age too short · SSL cert expiry | Graded on the URL actually served, so a site that redirects to HTTPS is not called unencrypted |
+| Cookie security | Missing `Secure`, `HttpOnly`, `SameSite` | Graded per attribute: missing `Secure` on HTTPS is MEDIUM, an absent `SameSite` is LOW because browsers default it to Lax |
+| CORS | Wildcard `Access-Control-Allow-Origin: *` | HIGH only with credentials, MEDIUM when the response sets cookies, otherwise LOW - a wildcard on public content discloses nothing |
+| Dangerous methods | TRACE, PUT, DELETE enabled | Read from the `Allow` header |
+| Sensitive file exposure | `/.env`, `/.git/config`, `/wp-config.php`, `/phpinfo.php`, `/phpmyadmin`, backup SQL files, Swagger UI | Each path has a body-signature validator, and a soft-404 baseline is captured first, so a catch-all 200 is not a finding |
+| Modern exposures | Prometheus `/metrics`, Spring Boot `/actuator` and `/actuator/env`, Go `/debug/pprof`, Laravel Telescope, Symfony profiler, `.svn` metadata | Same signature validation |
+| Browsable directories | Open listings at `/ftp`, `/files`, `/uploads`, `/backup` | Recognised by the markers Apache, nginx, Express `serve-index`, Python `http.server` and IIS emit |
+| Info disclosure | `Server` and `X-Powered-By` revealing stack details | Only a version is reported: every site sends a `Server` header, and "nginx" alone maps to no CVE |
+| Anti-bot detection | Challenge and block pages (HTTP 999, `cf-mitigated`, DataDome, Incapsula) | The scan stops and reports the block instead of grading a page real users never see |
 
 ### Port Scanner - CVE/CWE Mapping
 
-When a website URL is scanned, VulnSentinel also performs a parallel port scan across 25 common ports. Each open port is matched against a built-in risk database - no external API calls needed.
+> **Authorised targets only.** Reading a website's headers is what any browser does. Connecting to 25 of its ports is not, and against a host you do not control it is unauthorised testing. Ports are therefore probed only against hosts listed in `AUTHORISED_SCAN_TARGETS`, and **nothing is authorised by default**. HTTP checks always run, so declining to port scan never costs the assessment. Authorisation is checked against the host that actually served the response, so a redirect cannot carry the scan onto a third party.
+>
+> ```bash
+> AUTHORISED_SCAN_TARGETS=staging.example.com,*.internal.example.com
+> ```
+>
+> Exact match, with `*.` for subdomains. `*.example.com` covers `api.example.com` but not `example.com` itself. Loopback and private addresses follow the existing `ALLOW_PRIVATE_TARGETS` flag.
+
+When an authorised website URL is scanned, VulnSentinel also performs a parallel port scan across 25 common ports. Each open port is matched against a built-in risk database - no external API calls needed.
 
 | Port | Service | Severity | Key CVEs |
 |------|---------|----------|---------|
@@ -551,6 +619,30 @@ Both models run entirely client-side (WebGL) with no cloud API calls. When a pho
 | `WS` | `/ws/exam/{exam_id}/analysis` | Stream analysis agent progress |
 | `GET` | `/api/exam/report/{exam_id}` | Fetch integrity report |
 | `GET` | `/api/exam/sessions` | List all sessions |
+
+---
+
+## Testing & CI
+
+```bash
+cd backend && pytest          # 285 tests
+ruff check .                  # lint
+```
+
+Most of the suite is regression tests written from real incidents: a scan that reported a repository clean because the model prefixed its JSON with a sentence of prose, a HIGH "missing CSP" against a site with one of the strictest policies on the web, a patch that quoted a line of code which was not in the file. Each one is now a named test explaining what went wrong.
+
+Every push and pull request runs six jobs:
+
+| Job | What it gates |
+|-----|---------------|
+| Backend (3.11, 3.12) | `ruff` correctness rules and the full pytest suite |
+| Frontend build | `tsc --noEmit` and a production Next.js build |
+| Security self-scan | Bandit at MEDIUM and above, blocking. A security tool that ships insecure code is not credible |
+| Dependency audit | `npm audit` and `pip-audit`, advisory |
+| API smoke test | Boots the API with **no** API key and asserts `/health` - a missing key must degrade to the local model, not crash |
+| Release version consistency | Tags only: the tag must match `backend/main.py`, `package.json` and the lockfile |
+
+Tags matching `v*` build the same pipeline, so every release has a verified build behind it.
 
 ---
 
