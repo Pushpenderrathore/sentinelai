@@ -49,7 +49,7 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously - in *
 ## Modules
 
 ### 🔍 VulnSentinel - Autonomous Code & Website Security Auditor
-Paste a **GitHub repository URL** or any **live website URL**. VulnSentinel auto-detects the target type and routes to the right scanner - Semgrep and Bandit static analysis for repos, HTTP security checks for websites. Five specialised AI agents then map findings to OWASP Top 10 and CVEs, reason about real-world exploitability, generate patches or remediation guidance, and produce a full security report - all without a human in the loop.
+Paste a **GitHub repository URL** or any **live website URL**. Six specialised agents run as a LangGraph pipeline: an Orchestrator plans the audit, a Scanner routes to the right engine - Semgrep and Bandit static analysis for repos, HTTP security checks for websites - and the remaining four map findings to OWASP Top 10 and CVEs, reason about real-world exploitability, generate patches or remediation guidance, and compile the report. All without a human in the loop.
 
 The agents enrich the findings; they do not decide them. The risk score is calculated from the evidence, so a rescan reproduces it. See [Why the findings can be trusted](#why-the-findings-can-be-trusted).
 

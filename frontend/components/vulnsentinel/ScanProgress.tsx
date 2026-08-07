@@ -30,19 +30,18 @@ interface ScanProgressProps {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-// Visible pipeline rows, in execution order. Positions 0-4 line up with the
-// first five backend graph nodes below.
+// Visible pipeline rows, in execution order, one per backend graph node.
 const AGENT_PIPELINE: { key: string; label: string; description: string }[] = [
   { key: "orchestrator",     label: "Orchestrator",     description: "Plans scan strategy" },
   { key: "scanner",          label: "Scanner Agent",    description: "Clones repo · runs Semgrep + Bandit" },
   { key: "vuln_analyzer",    label: "Vuln Analyzer",    description: "Maps findings to OWASP & CVEs" },
   { key: "exploit_reasoner", label: "Exploit Reasoner", description: "Assesses real-world exploitability" },
   { key: "fix_suggester",    label: "Fix Suggester",    description: "Generates code patches" },
+  { key: "report_generator", label: "Report Generator", description: "Calculates the risk score · compiles the report" },
 ]
 
 // Backend graph node order. astream emits a node's name once it has finished,
-// so the highest-seen node tells us everything before it is done. The trailing
-// report_generator node is not shown as a row but counts toward progress.
+// so the highest-seen node tells us everything before it is done.
 const NODE_ORDER = [
   "orchestrator",
   "scanner",

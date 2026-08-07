@@ -39,6 +39,7 @@ const GITHUB_AGENTS = [
   { name: "Vuln Analyzer",   desc: "Maps findings to OWASP categories & CVEs" },
   { name: "Exploit Reasoner", desc: "Assesses real-world exploitability" },
   { name: "Fix Suggester",    desc: "Generates code patches per vulnerability" },
+  { name: "Report Generator", desc: "Calculates the risk score · compiles the report" },
 ]
 
 const WEBSITE_AGENTS = [
@@ -47,6 +48,7 @@ const WEBSITE_AGENTS = [
   { name: "Vuln Analyzer",   desc: "Maps findings to OWASP categories & CVEs" },
   { name: "Exploit Reasoner", desc: "Assesses exploitability of each issue" },
   { name: "Fix Suggester",    desc: "Generates remediation guidance" },
+  { name: "Report Generator", desc: "Calculates the risk score · compiles the report" },
 ]
 
 export default function ScanPage() {

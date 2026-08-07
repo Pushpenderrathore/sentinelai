@@ -64,7 +64,7 @@ Both problems are the same problem:
 │                     │    │                     │
 │  Paste a GitHub URL │    │  Start an exam      │
 │  ↓                  │    │  ↓                  │
-│  5 AI agents audit  │    │  AI monitors in     │
+│  6 AI agents audit  │    │  AI monitors in     │
 │  your codebase      │    │  real time          │
 │  ↓                  │    │  ↓                  │
 │  CVEs · OWASP · patches  │  instant alerts + AI report
