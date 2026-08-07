@@ -6,6 +6,7 @@ service to known vulnerabilities — similar to Shodan's basic view.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import socket
 import concurrent.futures
@@ -285,6 +286,18 @@ def _cdn_alternate_risk(port: int, cdn: str) -> dict:
     }
 
 
+def _is_loopback(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip).is_loopback
+    except ValueError:
+        return False
+
+
+# One severity step down, because a service bound to loopback is not reachable
+# from anywhere else.
+_DOWNGRADE = {"CRITICAL": "MEDIUM", "HIGH": "MEDIUM", "MEDIUM": "LOW", "LOW": "LOW"}
+
+
 def scan_ports(host: str, skip_ports: "frozenset|set|tuple" = (),
                cdn: str | None = None) -> list[dict]:
     """
@@ -294,6 +307,12 @@ def scan_ports(host: str, skip_ports: "frozenset|set|tuple" = (),
     `skip_ports` suppresses ports whose exposure is the entire point of the
     target, such as 443 on a website. `cdn`, when the target is CDN-fronted,
     reclassifies the alternate ports that CDN publishes by default.
+
+    Scanning loopback finds what is listening on the machine running the scan,
+    which is not the same as what the world can reach. Reporting a developer's
+    local PostgreSQL as "exposed to the internet - direct database access
+    possible" is simply false, and it took a demo scan to 100/100 CRITICAL.
+    Loopback results are therefore reworded and stepped down one severity.
     """
     skip_ports = frozenset(skip_ports)
 
@@ -302,6 +321,8 @@ def scan_ports(host: str, skip_ports: "frozenset|set|tuple" = (),
         ip = socket.gethostbyname(host)
     except socket.gaierror as e:
         return [{"error": f"DNS resolution failed for {host}: {e}"}]
+
+    loopback = _is_loopback(ip)
 
     open_ports: list[dict] = []
 
@@ -325,18 +346,36 @@ def scan_ports(host: str, skip_ports: "frozenset|set|tuple" = (),
                     "recommendation": f"Audit whether port {port} needs to be publicly accessible.",
                 })
 
+            severity = risk["severity"]
+            description = risk["description"]
+            recommendation = risk["recommendation"]
+            if loopback:
+                severity = _DOWNGRADE.get(severity, severity)
+                description = (
+                    f"{service} is listening on this machine's loopback "
+                    f"interface (port {port}). It is not reachable from the "
+                    f"network, so this describes the host running the scan, "
+                    f"not an internet exposure."
+                )
+                recommendation = (
+                    f"Nothing to fix if {service} is meant to be local. Confirm "
+                    f"it is bound to 127.0.0.1 and not 0.0.0.0 before this host "
+                    f"is exposed."
+                )
+
             open_ports.append({
                 "type": "port_exposure",
                 "port": port,
                 "service": service,
                 "banner": banner or "—",
                 "ip": ip,
-                "severity": risk["severity"],
+                "loopback": loopback,
+                "severity": severity,
                 "owasp_category": risk["owasp"],
                 "cwes": risk["cwes"],
                 "cves": risk["cves"],
-                "description": risk["description"],
-                "recommendation": risk["recommendation"],
+                "description": description,
+                "recommendation": recommendation,
                 "rule_id": f"PORT-{port}",
                 "file": f"{host}:{port}",
                 "line": 0,
