@@ -106,11 +106,14 @@ Website mode is a passive configuration and exposure audit. It reads headers, co
 The demo target is **OWASP Juice Shop**, a deliberately vulnerable application published to be tested, so no question of authorisation arises.
 
 ```bash
-# Recommended: run it locally, so the demo does not depend on anyone's uptime
-docker run --rm -p 3000:3000 bkimminich/juice-shop
+# Recommended: run it locally, so the demo does not depend on anyone's uptime.
+# Map to 8080 - url_guard only permits ports 80, 443, 8080 and 8443.
+docker run --rm -p 8080:3000 bkimminich/juice-shop
 ```
 
-Then scan `http://localhost:3000/` with `ALLOW_PRIVATE_TARGETS=true` set in `backend/.env`.
+Then set `ALLOW_PRIVATE_TARGETS=true` in `backend/.env` and scan `http://localhost:8080/`.
+
+> Scanning `localhost` also port scans **your own machine**, so anything you happen to be running shows up. Those findings say so in their own text - *"listening on this machine's loopback interface... describes the host running the scan, not an internet exposure"* - and are graded accordingly, rather than claiming your local database is exposed to the world.
 
 > The public instance at `demo.owasp-juice.shop` also works, but it is a free Heroku dyno and goes down regularly - it returned `503 Application Error` twice while this section was being written. If it is down, SentinelAI says so rather than grading the error page:
 >
