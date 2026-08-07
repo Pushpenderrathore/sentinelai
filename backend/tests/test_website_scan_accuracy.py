@@ -832,6 +832,56 @@ class TestUnreachableTargets:
         assert orchestrator.compute_risk(real)["risk_score"] == 0
 
 
+class TestServerErrorsAreNotGraded:
+    """
+    When the OWASP Juice Shop demo went down, the scanner graded a 567-byte
+    Heroku "Application Error" page and reported six confident findings about
+    missing headers - including X-Frame-Options and X-Content-Type-Options,
+    which the real application does send. Same failure as grading a bot
+    challenge: the response is not the application.
+    """
+
+    def _scan(self, monkeypatch, status):
+        monkeypatch.setattr(website_scanner, "assert_safe_target", lambda u: u)
+        url = "https://example.com/"
+
+        class _Session:
+            headers = {}
+
+            def get(self, u, **k):
+                return _Resp(status, {"server": "Heroku"},
+                             "<html><body>Application Error</body></html>", url=url)
+
+        monkeypatch.setattr(website_scanner.requests, "Session", lambda: _Session())
+        meta = {}
+        return website_scanner.scan_website(url, meta), meta
+
+    def test_no_header_findings_from_an_error_page(self, monkeypatch):
+        findings, _ = self._scan(monkeypatch, 503)
+        assert not any("Missing security header" in f["description"] for f in findings)
+
+    def test_it_is_typed_as_a_scan_error(self, monkeypatch):
+        findings, meta = self._scan(monkeypatch, 503)
+        assert len(findings) == 1
+        assert findings[0]["type"] == "scan_error"
+        assert meta["server_error"] == 503
+
+    def test_it_does_not_score_as_a_vulnerability(self, monkeypatch):
+        findings, _ = self._scan(monkeypatch, 500)
+        real = [f for f in findings if f.get("type") != "scan_error"]
+        assert orchestrator.compute_risk(real)["risk_score"] == 0
+
+    def test_a_healthy_site_is_still_graded(self, monkeypatch):
+        findings, meta = self._scan(monkeypatch, 200)
+        assert meta["server_error"] is None
+        assert any("Missing security header" in f["description"] for f in findings)
+
+    def test_a_404_is_still_graded(self, monkeypatch):
+        """A missing page is still served by the real application."""
+        findings, meta = self._scan(monkeypatch, 404)
+        assert meta["server_error"] is None
+
+
 class TestGithubItselfIsNotGithubPages:
     """
     github.com serves its own application with "Server: github.com", so the

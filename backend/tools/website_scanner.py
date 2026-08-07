@@ -525,6 +525,32 @@ def scan_website(url: str, meta: dict | None = None) -> list[dict]:
         }]
     meta["blocked"] = None
 
+    # ── 1c. Server error ────────────────────────────────────────────────────
+    # A 5xx is the server failing, not the application answering. Its headers
+    # belong to an error page: when the OWASP Juice Shop demo went down, this
+    # scanner graded a 567-byte Heroku "Application Error" screen and reported
+    # six confident findings about missing headers, including two the real app
+    # does send. Same mistake as grading a bot-challenge page, different cause.
+    if resp.status_code >= 500:
+        meta["server_error"] = resp.status_code
+        return [{
+            "type":        "scan_error",
+            "source":      "website",
+            "file":        url,
+            "line":        0,
+            "severity":    "LOW",
+            "category":    "scan-error",
+            "description": (
+                f"Target returned HTTP {resp.status_code}, so no security "
+                f"assessment was performed. The response is a server error "
+                f"page, not the application, and its headers are not the "
+                f"application's headers."
+            ),
+            "code": f"GET {url} -> HTTP {resp.status_code} "
+                    f"({len(resp.content)} bytes, server: {hdrs.get('server', '?')})",
+        }]
+    meta["server_error"] = None
+
     # ── 2. HTTP (no TLS) ────────────────────────────────────────────────────
     # Judged on where the request ended up. A site that answers on port 80 and
     # immediately redirects to HTTPS is doing the right thing, and calling that

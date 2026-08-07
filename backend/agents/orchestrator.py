@@ -698,6 +698,22 @@ def _scan_website(state: ScanState) -> dict:
                 "agent_logs": logs,
             }
 
+        # The server answered with an error page. Grading it would describe the
+        # error page, not the site.
+        if meta.get("server_error"):
+            logs.append(f"[Scanner] Target returned HTTP {meta['server_error']} - "
+                        f"that is a server error page, not the application")
+            logs.append("[Scanner] No assessment performed")
+            return {
+                "repo_path": "",
+                "tech_stack": {"type": "website", "url": state["repo_url"]},
+                "raw_findings": [],
+                "errors": [f"{state['repo_url']} returned HTTP {meta['server_error']}. "
+                           f"The site is down or erroring, so there is nothing to assess."],
+                "status": "analyzing",
+                "agent_logs": logs,
+            }
+
         # No response at all: there is nothing to grade, and a host that does
         # not answer must not be scored as though it had failed a check.
         if meta.get("unreachable"):
