@@ -37,6 +37,7 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously - in *
   - [Website Scanner Checks](#website-scanner-checks)
   - [Port Scanner - CVE/CWE Mapping](#port-scanner---cvecwe-mapping)
 - [Testing & CI](#testing--ci)
+- [FAQ](#faq)
   - [ExamGuard - Two-Phase System](#examguard---two-phase-system)
   - [Real-time Alert Thresholds](#real-time-alert-thresholds-examguard)
 - [WebSocket Message Protocol](#websocket-message-protocol)
@@ -99,6 +100,53 @@ Website mode is a passive configuration and exposure audit. It reads headers, co
 ## Demo
 
 > 📹 **Demo video:** *(add link after recording)*
+
+### Try it yourself
+
+The demo target is **OWASP Juice Shop**, a deliberately vulnerable application published to be tested, so no question of authorisation arises.
+
+```bash
+# Recommended: run it locally, so the demo does not depend on anyone's uptime
+docker run --rm -p 3000:3000 bkimminich/juice-shop
+```
+
+Then scan `http://localhost:3000/` with `ALLOW_PRIVATE_TARGETS=true` set in `backend/.env`.
+
+> The public instance at `demo.owasp-juice.shop` also works, but it is a free Heroku dyno and goes down regularly - it returned `503 Application Error` twice while this section was being written. If it is down, SentinelAI says so rather than grading the error page:
+>
+> ```
+> Target returned HTTP 503, so no security assessment was performed. The response
+> is a server error page, not the application, and its headers are not the
+> application's headers.
+> ```
+
+When the app is healthy, two of the findings can be verified in a second browser tab while the scan is still on screen:
+
+| Finding | Check it |
+|---------|----------|
+| `Directory listing exposed: /ftp` | `/ftp` is a browsable directory. `acquisitions.md` inside it opens with *"This document is confidential"* |
+| `Prometheus metrics exposed publicly` | `/metrics` serves ~26 KB of internal telemetry with no authentication |
+
+Then read the score off the agent log rather than taking it on trust:
+
+```
+[VulnAnalyzer] 7 findings kept the scanner's severity (deterministic checks, not model judgement)
+[ReportGenerator] Severity counts: CRITICAL 0, HIGH 3, MEDIUM 1, LOW 3
+[ReportGenerator] Score contributions: CRITICAL +0, HIGH +60, MEDIUM +8, LOW +6, floor 40
+[ReportGenerator] Risk score: 74/100 (calculated, not model-generated)
+```
+
+Add 60, 8 and 6 and you get the score. Scan twice and it is identical, on Groq or offline on Ollama, because it is arithmetic over the findings rather than something the model wrote.
+
+**Against the public instance the port scan refuses to run**, because Juice Shop invites application testing but its hosting provider did not:
+
+```
+[Scanner] Port scan skipped - demo.owasp-juice.shop is not an authorised scan
+          target. Port scanning a host you do not control is unauthorised
+          testing, so it is off by default.
+```
+
+A local container is your own machine, so `ALLOW_PRIVATE_TARGETS=true` authorises it and the port scan runs. See [Port Scanner](#port-scanner---cvecwe-mapping).
 
 **Home - SentinelAI module selector**
 ![SentinelAI Home](docs/screenshots/home2.png)
@@ -643,6 +691,31 @@ Every push and pull request runs six jobs:
 | Release version consistency | Tags only: the tag must match `backend/main.py`, `package.json` and the lockfile |
 
 Tags matching `v*` build the same pipeline, so every release has a verified build behind it.
+
+---
+
+## FAQ
+
+**Isn't this just a wrapper around an LLM?**
+The model cannot add a finding, remove one, change a severity, or set the risk score. It explains attack vectors, maps findings to OWASP and CVE, and writes the prose. If it fails completely, every finding is still reported at the scanner's own severity and the log says enrichment was unavailable. A model failure costs you the explanation, never a vulnerability.
+
+**How do I know the risk score isn't invented?**
+It is printed as arithmetic in the agent log - the per-severity contributions and the floor that produced it - and stored in the report as `summary.risk_breakdown`. The same findings give the same number on Groq or on a local Ollama model. Rescan and check.
+
+**You scanned OWASP Juice Shop and didn't find its SQL injection.**
+Correct, and deliberate. Website mode is a passive configuration and exposure audit: it reads headers, cookies, TLS and known paths, and never sends an attack payload. Code-level vulnerabilities are the repository scanner's job, through Semgrep and Bandit. Active application testing is on the roadmap, for authorised targets only.
+
+**What stops someone pointing this at a site they don't own?**
+Port scanning refuses unless the host is listed in `AUTHORISED_SCAN_TARGETS`, which is empty by default, and the refusal is written into the scan log. The check runs against the host that actually answered, so a redirect cannot carry the scan onto a third party. HTTP checks are ordinary requests, the same ones a browser makes.
+
+**What happens if the API key is missing, rate-limited, or the internet is down?**
+The router falls back to a local Ollama model. A CI job boots the API with no key at all and asserts `/health` still answers, because a missing key used to crash every scan.
+
+**Why did my scan return no findings at all?**
+Three cases are reported rather than scored: the target refused automated scanning (a bot challenge), the target returned a server error, or it could not be reached. In each case the log says no assessment was performed. That is not the same as a clean result, and the tool does not present it as one.
+
+**Are the findings comparable between scans?**
+Yes, and that is the point. The score is a function of the findings, the findings come from deterministic checks, and history pages plot the score over time so a fix shows up as a drop.
 
 ---
 
