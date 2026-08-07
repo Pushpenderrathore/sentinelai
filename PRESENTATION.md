@@ -149,7 +149,7 @@ GitHub repo URL  or  live website URL
 
 **One-liner caption:**
 ```
-Tab switch → instant alert in < 200 ms  ·  No human watching required
+Tab switch → instant alert, no LLM in the path  ·  No human watching required
 ```
 
 ---
@@ -162,7 +162,7 @@ LAYER 1 - Real-time (during exam)
 ─────────────────────────────────────────────────────────
 Browser events → WebSocket → Rule engine → Instant alert
   tab switch           ↑ no LLM         → invigilator
-  face absent          fires in <200ms
+  face absent          fires immediately
   copy-paste
 
 LAYER 2 - Deep analysis (after exam)
@@ -246,15 +246,15 @@ Set the risk score         Suggest remediation
 
 ```
 ┌───────────────────┐  ┌────────────────────┐  ┌──────────────────┐
-│  ₹10-50 lakh      │  │  < 5 minutes       │  │  10 crore+       │
+│  ₹10-50 lakh      │  │  ~3 minutes        │  │  10 crore+       │
 │                   │  │                    │  │                  │
 │  Typical security │  │  SentinelAI scans  │  │  Students taking │
-│  audit cost       │  │  a full repo end-  │  │  online exams in │
-│  per engagement   │  │  to-end            │  │  India per year  │
+│  audit cost       │  │  a full repo on    │  │  online exams in │
+│  per engagement   │  │  Groq, end to end  │  │  India per year  │
 └───────────────────┘  └────────────────────┘  └──────────────────┘
 
-SentinelAI makes enterprise-grade security & proctoring
-accessible to any developer and any institution.
+SentinelAI puts security auditing and exam integrity within
+reach of any developer and any institution.
 ```
 
 ---
