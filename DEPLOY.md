@@ -33,10 +33,15 @@ Both platforms deploy from the repo, so everything below just connects to it.
 3. When prompted, set the env vars it can't infer:
    - **`GROQ_API_KEY`** → your key from [console.groq.com](https://console.groq.com)
    - **`ALLOWED_ORIGINS`** → leave blank for now (you'll set it in step 3).
-4. First build takes a few minutes (installs semgrep/bandit). When it's live
-   you'll get a URL like `https://sentinelai-backend.onrender.com`.
-5. Check it: open `https://sentinelai-backend.onrender.com/health` →
-   `{"status":"ok",...}`.
+4. First build takes a few minutes (installs semgrep/bandit). When it's live,
+   **copy the URL shown in the Render dashboard.** It is usually
+   `https://sentinelai-backend.onrender.com`, but if that hostname is already
+   taken Render appends a random suffix
+   (`https://sentinelai-backend-a1b2.onrender.com`). Use whichever one the
+   dashboard shows - the service name in `render.yaml` does not guarantee the
+   hostname.
+5. Check it: open `<your-render-url>/health` → `{"status":"ok","version":"1.0.0",...}`.
+   The `version` field should match the release you deployed.
 
 > **Free-tier note:** the service spins down after ~15 min idle, so the first
 > request after a pause takes ~30-60 s to wake (cold start). Fine for a demo.
@@ -49,9 +54,10 @@ Both platforms deploy from the repo, so everything below just connects to it.
    import this repo.
 2. **Set Root Directory to `frontend`** (Edit → `frontend`). Vercel auto-detects
    Next.js for build settings.
-3. Add Environment Variables (Production), pointing at your Render URL:
-   - `NEXT_PUBLIC_API_URL` = `https://sentinelai-backend.onrender.com`
-   - `NEXT_PUBLIC_WS_URL`  = `wss://sentinelai-backend.onrender.com`
+3. Add Environment Variables (Production), pointing at the Render URL you
+   copied in step 1.4 - not at the service name:
+   - `NEXT_PUBLIC_API_URL` = `https://<your-render-host>.onrender.com`
+   - `NEXT_PUBLIC_WS_URL`  = `wss://<your-render-host>.onrender.com`
 4. **Deploy.** You'll get a URL like `https://sentinelai.vercel.app`.
 
 ---

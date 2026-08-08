@@ -3,6 +3,11 @@
 # Set the secret env vars (GROQ_API_KEY, ALLOWED_ORIGINS) in the dashboard.
 services:
   - type: web
+    # This is the service name, not the hostname. Render derives the public URL
+    # from it, but appends a random suffix when the hostname is already taken -
+    # so this service can be served from sentinelai-backend-xxxx.onrender.com.
+    # Always read the real URL from the dashboard, and note that scan history
+    # lives on the container filesystem, which the free plan wipes on restart.
     name: sentinelai-backend
     runtime: python
     plan: free
