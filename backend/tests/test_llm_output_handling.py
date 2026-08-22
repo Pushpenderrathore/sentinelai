@@ -530,3 +530,82 @@ class TestCVEsAreNotInvented:
         merged, _ = orchestrator._merge_llm_enrichment(baseline, [])
 
         assert merged[0]["cve"] == "CVE-1999-0246 (Telnet cleartext credentials)"
+
+
+class TestAnUnreachableTargetIsNotACleanResult:
+    """
+    Scanning a site that reset the connection produced: 0 findings, 0/100 LOW
+    RISK, "revealed no vulnerabilities... the site appears secure", a green
+    "No vulnerabilities found" panel, and a saved history entry. Nothing had
+    been examined. This is the worst failure available to a security tool,
+    because the output is indistinguishable from a genuine clean result.
+    """
+
+    @staticmethod
+    def _state(reason="the target could not be reached (Connection reset by peer)"):
+        return {
+            "scan_id": "abc123",
+            "repo_url": "https://www.brcmcet.edu.in",
+            "tech_stack": {"type": "website", "url": "https://www.brcmcet.edu.in"},
+            "vulnerabilities": [],
+            "exploits": [],
+            "patches": [],
+            "errors": [f"Could not reach https://www.brcmcet.edu.in: {reason}"],
+            "not_assessed": reason,
+        }
+
+    def test_no_score_is_invented_for_a_scan_that_examined_nothing(self, monkeypatch):
+        def boom(_messages):
+            raise AssertionError("the model must not be asked to summarise a scan that never ran")
+        monkeypatch.setattr(orchestrator, "invoke_llm", boom)
+
+        report = orchestrator.report_generator_node(self._state())["report"]
+
+        assert report["assessed"] is False
+        assert report["summary"]["risk_score"] is None
+        assert report["summary"]["overall_risk"] == "UNKNOWN"
+
+    def test_the_summary_does_not_claim_the_site_is_secure(self, monkeypatch):
+        monkeypatch.setattr(orchestrator, "invoke_llm",
+                            lambda _m: (_ for _ in ()).throw(AssertionError("not called")))
+
+        summary = orchestrator.report_generator_node(self._state())["report"]["summary"]
+        text = summary["executive_summary"].lower()
+
+        assert "no assessment was performed" in text
+        assert "unknown" in text
+        for claim in ("no vulnerabilities", "appear secure", "looks clean", "is secure"):
+            assert claim not in text, claim
+
+    def test_the_reason_reaches_the_report(self, monkeypatch):
+        monkeypatch.setattr(orchestrator, "invoke_llm",
+                            lambda _m: (_ for _ in ()).throw(AssertionError("not called")))
+
+        report = orchestrator.report_generator_node(self._state())["report"]
+
+        assert "could not be reached" in report["not_assessed_reason"]
+        assert any("Could not reach" in e for e in report["errors"])
+
+    def test_the_log_says_zero_findings_does_not_mean_clean(self, monkeypatch):
+        monkeypatch.setattr(orchestrator, "invoke_llm",
+                            lambda _m: (_ for _ in ()).throw(AssertionError("not called")))
+
+        logs = " ".join(orchestrator.report_generator_node(self._state())["agent_logs"])
+
+        assert "No assessment performed" in logs
+        assert "nothing was examined" in logs
+
+    def test_a_genuinely_clean_scan_still_scores_normally(self, monkeypatch):
+        """The all-clear must survive: this is about scans that could not run."""
+        monkeypatch.setattr(orchestrator, "invoke_llm", lambda _m: type("R", (), {
+            "content": '{"executive_summary": "No issues found.", "key_recommendations": ["Keep patching."]}'
+        })())
+        state = self._state()
+        state["not_assessed"] = ""
+        state["errors"] = []
+
+        report = orchestrator.report_generator_node(state)["report"]
+
+        assert report["assessed"] is True
+        assert report["summary"]["risk_score"] == 0
+        assert report["summary"]["overall_risk"] == "LOW"

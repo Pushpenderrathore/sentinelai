@@ -24,7 +24,9 @@ interface Report {
   repo_url: string
   vulnerabilities: Vuln[]
   patches: Patch[]
-  summary: { executive_summary: string; risk_score: number; overall_risk: string; key_recommendations: string[] }
+  assessed?: boolean
+  not_assessed_reason?: string
+  summary: { executive_summary: string; risk_score: number | null; overall_risk: string; key_recommendations: string[] }
 }
 
 export default function ScanDashboard({ params }: { params: { id: string } }) {
@@ -128,11 +130,14 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
           {/* Risk badge */}
           {report?.summary && (
             <span className={`text-xs font-mono px-2 py-0.5 rounded-full border ${
+              report.assessed === false                  ? "pill-info"     :
               report.summary.overall_risk === "CRITICAL" ? "pill-critical" :
               report.summary.overall_risk === "HIGH"     ? "pill-high"     :
               report.summary.overall_risk === "MEDIUM"   ? "pill-medium"   : "pill-low"
             }`}>
-              {report.summary.overall_risk} RISK · {report.summary.risk_score}/100
+              {report.assessed === false
+                ? "NOT ASSESSED"
+                : `${report.summary.overall_risk} RISK · ${report.summary.risk_score}/100`}
             </span>
           )}
         </div>
@@ -260,7 +265,24 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
               <VulnCard key={v.id} vuln={v} patch={patchMap[v.id]} />
             ))}
 
-            {report && sortedVulns.length === 0 && (
+            {report && sortedVulns.length === 0 && report.assessed === false && (
+              <div className="flex flex-col items-center justify-center text-center px-6 py-10 gap-3">
+                <div className="w-10 h-10 rounded-full bg-sentinel-cyan/10 border border-sentinel-cyan/30 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-sentinel-cyan" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                  </svg>
+                </div>
+                <p className="text-sentinel-cyan font-medium">No assessment was performed</p>
+                <p className="text-sentinel-muted text-sm max-w-sm">
+                  {report.not_assessed_reason
+                    ? `This scan stopped because ${report.not_assessed_reason}.`
+                    : "This scan could not examine its target."}{" "}
+                  Zero findings here means nothing was looked at, not that nothing is wrong.
+                </p>
+              </div>
+            )}
+
+            {report && sortedVulns.length === 0 && report.assessed !== false && (
               <div className="flex flex-col items-center justify-center h-40 text-center">
                 <div className="w-10 h-10 rounded-full bg-sentinel-green/10 border border-sentinel-green/30 flex items-center justify-center mb-3">
                   <svg className="w-5 h-5 text-sentinel-green" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -268,7 +290,7 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
                   </svg>
                 </div>
                 <p className="text-sentinel-green font-medium">No vulnerabilities found</p>
-                <p className="text-sentinel-muted text-sm mt-1">Repository looks clean.</p>
+                <p className="text-sentinel-muted text-sm mt-1">The checks ran and nothing was flagged.</p>
               </div>
             )}
           </div>

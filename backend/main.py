@@ -117,8 +117,19 @@ def _visible_history() -> list[dict]:
 
 
 async def _append_scan_history(scan_id: str, repo_url: str, report: dict, started_at: float) -> None:
-    """Persist a completed scan to scan_history.json. Called only on success."""
+    """
+    Persist a completed scan to scan_history.json. Called only on success.
+
+    A scan that never reached its target is not a result. Recorded, it would
+    enter the history listing and the risk trend as a clean 0/100 point, which
+    is exactly the reading it must not be given, so it is left out.
+    """
     from urllib.parse import urlparse
+
+    if report.get("assessed") is False:
+        logger.info("Scan %s (%s) not saved to history: %s", scan_id, repo_url,
+                    report.get("not_assessed_reason", "no assessment performed"))
+        return
     vulns: list[dict] = report.get("vulnerabilities", [])
     sev: dict[str, int] = {}
     for v in vulns:

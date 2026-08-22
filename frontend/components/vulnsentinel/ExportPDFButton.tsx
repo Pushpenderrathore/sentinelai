@@ -37,9 +37,12 @@ export interface ScanReport {
   repo_url: string
   vulnerabilities: Vuln[]
   patches: Patch[]
+  /** false when the scan never reached its target: there is no score to print. */
+  assessed?: boolean
+  not_assessed_reason?: string
   summary: {
     executive_summary: string
-    risk_score: number
+    risk_score: number | null
     overall_risk: string
     key_recommendations: string[]
   }
@@ -177,7 +180,10 @@ function buildCoverPage(doc: JsPDFType, report: ScanReport, scanId: string) {
 
   const vulns = report.vulnerabilities ?? []
   const overall = report.summary?.overall_risk ?? "UNKNOWN"
-  const score   = report.summary?.risk_score   ?? 0
+  // A scan that examined nothing has no score. Defaulting null to 0 would print
+  // a clean "0/100 LOW RISK" cover page for a site that never answered.
+  const assessed = report.assessed !== false && report.summary?.risk_score != null
+  const score    = assessed ? (report.summary?.risk_score as number) : null
 
   // ── Cyan accent bar left edge
   doc.setFillColor(...C.cyan)
@@ -243,31 +249,38 @@ function buildCoverPage(doc: JsPDFType, report: ScanReport, scanId: string) {
   rule(doc, y, C.border)
   y += 10
 
-  const riskColor = SEV_COLOR[overall] ?? C.muted
+  const riskColor = assessed ? (SEV_COLOR[overall] ?? C.muted) : C.muted
 
   // Large risk score circle
   doc.setFillColor(...riskColor)
   doc.circle(MARGIN_X + 18, y + 14, 16, "F")
-  doc.setFontSize(18)
   doc.setFont("helvetica", "bold")
   doc.setTextColor(...C.bg)
-  const scoreStr = String(score)
+  doc.setFontSize(assessed ? 18 : 14)
+  const scoreStr = assessed ? String(score) : "n/a"
   const scoreW   = doc.getTextWidth(scoreStr)
   doc.text(scoreStr, MARGIN_X + 18 - scoreW / 2, y + 16.5)
-  doc.setFontSize(7)
-  doc.setTextColor(...C.bg)
-  const outOf = "/100"
-  doc.text(outOf, MARGIN_X + 18 - doc.getTextWidth(outOf) / 2, y + 22)
+  if (assessed) {
+    doc.setFontSize(7)
+    doc.setTextColor(...C.bg)
+    const outOf = "/100"
+    doc.text(outOf, MARGIN_X + 18 - doc.getTextWidth(outOf) / 2, y + 22)
+  }
 
   doc.setFontSize(20)
   doc.setFont("helvetica", "bold")
   doc.setTextColor(...riskColor)
-  doc.text(`${overall} RISK`, MARGIN_X + 42, y + 12)
+  doc.text(assessed ? `${overall} RISK` : "NOT ASSESSED", MARGIN_X + 42, y + 12)
 
   doc.setFontSize(9)
   doc.setFont("helvetica", "normal")
   doc.setTextColor(...C.muted)
-  doc.text("Overall risk assessment based on severity distribution and exploitability.", MARGIN_X + 42, y + 20)
+  doc.text(
+    assessed
+      ? "Overall risk assessment based on severity distribution and exploitability."
+      : "No checks ran against this target, so its security posture is unknown.",
+    MARGIN_X + 42, y + 20,
+  )
 
   // ── Severity distribution boxes
   y += 44

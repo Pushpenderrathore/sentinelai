@@ -57,5 +57,12 @@ class ScanState(TypedDict):
     status: str         # starting | scanning | analyzing | exploiting | patching | reporting | done | error
     errors: List[str]
 
+    # Why no assessment was performed: the target was unreachable, blocked
+    # automated scanning, or served an error page. Empty when the scan ran.
+    # Zero findings mean "nothing found" only when this is empty; otherwise
+    # they mean "nothing was looked at", which is not the same result and must
+    # never be reported as one.
+    not_assessed: str
+
     # Accumulates across nodes; streamed live to frontend via WebSocket
     agent_logs: Annotated[List[str], operator.add]

@@ -738,6 +738,7 @@ def _scan_website(state: ScanState) -> dict:
                 "raw_findings": [],
                 "errors": [f"Target blocked automated scanning: {meta['blocked']}. "
                            f"Scan a target you control, or one that permits scanning."],
+                "not_assessed": f"the target blocked automated scanning ({meta['blocked']})",
                 "status": "analyzing",
                 "agent_logs": logs,
             }
@@ -754,6 +755,8 @@ def _scan_website(state: ScanState) -> dict:
                 "raw_findings": [],
                 "errors": [f"{state['repo_url']} returned HTTP {meta['server_error']}. "
                            f"The site is down or erroring, so there is nothing to assess."],
+                "not_assessed": f"the site returned HTTP {meta['server_error']}, "
+                                f"so only its error page was reachable",
                 "status": "analyzing",
                 "agent_logs": logs,
             }
@@ -768,6 +771,7 @@ def _scan_website(state: ScanState) -> dict:
                 "tech_stack": {"type": "website", "url": state["repo_url"]},
                 "raw_findings": [],
                 "errors": [f"Could not reach {state['repo_url']}: {meta['unreachable']}"],
+                "not_assessed": f"the target could not be reached ({meta['unreachable']})",
                 "status": "analyzing",
                 "agent_logs": logs,
             }
@@ -1256,11 +1260,71 @@ Output only valid JSON. No markdown."""
 #  Node: Report Generator
 # ══════════════════════════════════════════════════════════════
 
+def _unassessed_report(state: ScanState) -> dict:
+    """
+    The report for a scan that could not examine its target.
+
+    No model is asked for a summary here. Given "0 vulnerabilities" it writes a
+    reassuring one, and there is nothing to be reassured about: the question of
+    whether this site is secure is simply unanswered. The score is None rather
+    than 0, so it cannot be plotted as a clean data point in the risk trend.
+    """
+    reason = state.get("not_assessed", "the target could not be assessed")
+    summary = {
+        "executive_summary": (
+            f"No assessment was performed, because {reason}. This is not a clean "
+            f"result: nothing about {state['repo_url']} was examined, so its "
+            f"security posture is unknown. Re-run the scan once the target "
+            f"responds."
+        ),
+        "key_recommendations": [
+            "Confirm the target is reachable and serving the real application, "
+            "then scan it again.",
+        ],
+        "risk_score": None,
+        "overall_risk": "UNKNOWN",
+        "assessed": False,
+        "not_assessed_reason": reason,
+    }
+    report = {
+        "scan_id": state["scan_id"],
+        "repo_url": state["repo_url"],
+        "tech_stack": state.get("tech_stack", {}),
+        "summary": summary,
+        "vulnerabilities": [],
+        "exploits": [],
+        "patches": [],
+        "total_findings": 0,
+        "assessed": False,
+        "not_assessed_reason": reason,
+        "errors": state.get("errors", []),
+    }
+    return {
+        "report": report,
+        "status": "done",
+        "agent_logs": [
+            f"[ReportGenerator] No assessment performed: {reason}",
+            "[ReportGenerator] No risk score: zero findings here means nothing was "
+            "examined, not that nothing is wrong",
+            f"[ReportGenerator] Scan {state['scan_id']} ended without an assessment.",
+        ],
+    }
+
+
 def report_generator_node(state: ScanState) -> dict:
     """Compiles all agent outputs into the final structured report."""
     vulns = state.get("vulnerabilities", [])
     critical = [v for v in vulns if v["severity"] == "CRITICAL"]
     high = [v for v in vulns if v["severity"] == "HIGH"]
+
+    # An unreachable host, a bot challenge and an error page all end here with
+    # an empty findings list, which scores 0/100 LOW and reads as an all-clear.
+    # A site that never answered was being reported as "no vulnerabilities
+    # found, the site appears secure" — the worst thing a security tool can
+    # say, because it is indistinguishable from a real clean result. There is
+    # no score to give when nothing was examined.
+    if state.get("not_assessed"):
+        return _unassessed_report(state)
 
     # Scored here, before the model is asked for anything, so the number is a
     # fact about the findings rather than an opinion about them.
@@ -1333,6 +1397,7 @@ Top findings: {json.dumps(vulns[:5], indent=2)}"""),
         "exploits": state.get("exploits", []),
         "patches": state.get("patches", []),
         "total_findings": len(state.get("vulnerabilities", [])),
+        "assessed": True,
         "errors": state.get("errors", []),
     }
 
@@ -1421,6 +1486,7 @@ def _initial_state(repo_url: str, scan_id: Optional[str] = None) -> ScanState:
         report={},
         status="starting",
         errors=[],
+        not_assessed="",
         agent_logs=[f"[Orchestrator] Initializing scan {sid} for {repo_url}"],
     )
 
