@@ -66,6 +66,16 @@ function bytes(n: number) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
+// Retention windows can be compressed to minutes for a demo, and a fresh scan
+// is minutes old, so days alone would round everything interesting to "0d".
+function age(days: number) {
+  const abs = Math.abs(days)
+  if (abs < 1 / 1440) return "just now"
+  if (abs < 1 / 24) return `${Math.round(abs * 1440)} min`
+  if (abs < 1) return `${(abs * 24).toFixed(1)} h`
+  return `${abs.toFixed(abs < 10 ? 1 : 0)}d`
+}
+
 function when(ts: number | null | undefined) {
   if (!ts) return "—"
   return new Date(ts * 1000).toLocaleString(undefined, {
@@ -162,7 +172,7 @@ function ScanRow({ item, busy, onAction }: {
             {item.domain || item.repo_url}
           </p>
           <p className="text-[11px] font-mono text-sentinel-muted">
-            {item.scan_id} · {item.scan_date} · {item.age_days}d old
+            {item.scan_id} · {item.scan_date} · {age(item.age_days)} old
             {item.payload_present
               ? ` · ${item.total_vulns} finding${item.total_vulns === 1 ? "" : "s"}`
               : " · findings not in the hot record"}
@@ -204,8 +214,8 @@ function ScanRow({ item, busy, onAction }: {
                 {!item.next_due_action ? "none scheduled"
                   : item.days_until_due === null ? item.next_due_action
                   : item.days_until_due < 0
-                    ? `${item.next_due_action} — overdue by ${Math.abs(item.days_until_due)}d`
-                    : `${item.next_due_action} in ${item.days_until_due}d`}
+                    ? `${item.next_due_action}, overdue by ${age(item.days_until_due)}`
+                    : `${item.next_due_action} in ${age(item.days_until_due)}`}
               </p>
             </div>
             <div>
@@ -459,7 +469,7 @@ export default function RetentionPage() {
                       <div key={p.scan_id} className="flex items-center gap-3 text-xs font-mono">
                         <span className="text-sentinel-muted w-20">{p.scan_id}</span>
                         <span className="text-slate-300 flex-1 truncate">{p.domain}</span>
-                        <span className="text-slate-400">{p.age_days}d</span>
+                        <span className="text-slate-400">{age(p.age_days)}</span>
                         <span className={p.held ? "text-orange-300" : "text-cyan-300"}>
                           {p.held ? `${p.action} (held)` : p.action}
                         </span>

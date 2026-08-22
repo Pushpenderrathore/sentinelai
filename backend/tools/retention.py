@@ -809,7 +809,8 @@ class RetentionStore:
                 "domain": record.get("domain", ""),
                 "state": lc.get("state", STATE_ACTIVE),
                 "action": action,
-                "age_days": round(_days(as_of - record.get("timestamp", as_of)), 1),
+                # 3dp so a scan minutes old is not rounded away to 0.0
+                "age_days": round(_days(as_of - record.get("timestamp", as_of)), 3),
                 "held": bool(lc.get("hold")),
             })
 
@@ -905,11 +906,11 @@ class RetentionStore:
                 "last_operation": lc.get("last_operation"),
                 "last_outcome": lc.get("last_outcome"),
                 "residue": lc.get("residue", []),
-                "age_days": round(_days(now - record.get("timestamp", now)), 1),
+                "age_days": round(_days(now - record.get("timestamp", now)), 3),
                 "next_due_action": self.policy.due_action(record, now)
                                    or (self.policy.due_action(record, due_at) if due_at else None),
                 "next_due_at": due_at,
-                "days_until_due": round(_days(due_at - now), 1) if due_at else None,
+                "days_until_due": round(_days(due_at - now), 3) if due_at else None,
             })
 
         archive_files = (list(self.archive_dir.glob("*.json"))
