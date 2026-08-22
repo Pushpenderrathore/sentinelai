@@ -314,13 +314,19 @@ class TestWebsiteSeverityIsNotTheModelsToChange:
         vulns = self._run(monkeypatch, reply)["vulnerabilities"]
         assert vulns[0]["description"] == "Missing security header: X-Frame-Options"
 
-    def test_category_and_cve_are_still_taken_from_the_model(self, monkeypatch):
-        """Enrichment the scanner genuinely cannot produce is still welcome."""
+    def test_category_is_taken_from_the_model_but_not_a_cve(self, monkeypatch):
+        """
+        The OWASP category is enrichment the scanner cannot produce, so it is
+        welcome. A CVE is not: a missing header is a configuration weakness,
+        which is what the category is for, and there is no software version
+        here to match an identifier against. This used to accept whatever the
+        model wrote as long as it began with "CVE-".
+        """
         reply = ('[{"id": "VULN-001", "severity": "HIGH", '
                  '"category": "A01:2021-Broken Access Control", "cve": "CVE-2021-1234"}]')
         vulns = self._run(monkeypatch, reply)["vulnerabilities"]
         assert vulns[0]["category"] == "A01:2021-Broken Access Control"
-        assert vulns[0]["cve"] == "CVE-2021-1234"
+        assert vulns[0].get("cve") is None
         assert vulns[0]["severity"] == "MEDIUM"
 
     def test_scanner_severities_are_not_inflated(self, monkeypatch):
@@ -451,3 +457,76 @@ class TestExploitReasonerAccounting:
         """Only CRITICAL/HIGH are in scope, so VULN-007 must not appear."""
         result = self._run(monkeypatch, "nonsense")
         assert all(e["vuln_id"] != "VULN-007" for e in result["exploits"])
+
+
+class TestCVEsAreNotInvented:
+    """
+    The analyzer prompt asked for a "cve" on every finding and the merge accepted
+    anything starting with "CVE-". A missing Referrer-Policy header has no CVE,
+    so the model supplied plausible-looking ids for findings that cannot have
+    one and the format check waved them through. A wrong CVE is worse than none:
+    it is the part of a report a reader is least able to sanity-check.
+    """
+
+    def test_well_formed_ids_pass(self):
+        assert orchestrator._valid_cve("CVE-2024-6387", this_year=2026) == "CVE-2024-6387"
+        assert orchestrator._valid_cve("cve-2021-44228", this_year=2026) == "CVE-2021-44228"
+        assert orchestrator._valid_cve("  CVE-2014-0160  ", this_year=2026) == "CVE-2014-0160"
+
+    def test_the_placeholder_from_the_prompt_is_rejected(self):
+        assert orchestrator._valid_cve("CVE-XXXX-XXXX", this_year=2026) is None
+
+    def test_impossible_years_are_rejected(self):
+        assert orchestrator._valid_cve("CVE-1998-0001", this_year=2026) is None   # predates the scheme
+        assert orchestrator._valid_cve("CVE-2031-0001", this_year=2026) is None   # in the future
+
+    def test_malformed_ids_are_rejected(self):
+        for bad in ("CVE-2024", "CVE-2024-12", "not a cve", "", None, 2024,
+                    "See CVE-2024-6387 for details"):
+            assert orchestrator._valid_cve(bad, this_year=2026) is None, bad
+
+    def test_a_website_finding_never_carries_a_model_supplied_cve(self):
+        baseline = [{"id": "VULN-001", "source": "website", "severity": "HIGH",
+                     "description": "Missing security header: Referrer-Policy",
+                     "file": "", "line": 0}]
+        llm = [{"id": "VULN-001", "severity": "HIGH", "category": "A05:2021-Security Misconfiguration",
+                "description": "Missing security header: Referrer-Policy",
+                "cve": "CVE-2023-44487"}]
+
+        merged, stats = orchestrator._merge_llm_enrichment(baseline, llm)
+
+        assert merged[0].get("cve") is None
+        assert stats["cve_refused"] == 1
+
+    def test_a_code_finding_may_carry_a_valid_one(self):
+        baseline = [{"id": "VULN-001", "source": "semgrep", "severity": "HIGH",
+                     "description": "Use of insecure deserialization",
+                     "file": "app.py", "line": 12}]
+        llm = [{"id": "VULN-001", "severity": "HIGH", "category": "A08:2021-Software and Data Integrity Failures",
+                "description": "Use of insecure deserialization", "cve": "CVE-2021-44228"}]
+
+        merged, stats = orchestrator._merge_llm_enrichment(baseline, llm)
+
+        assert merged[0]["cve"] == "CVE-2021-44228"
+        assert stats["cve_refused"] == 0
+
+    def test_a_malformed_cve_on_a_code_finding_is_counted_not_kept(self):
+        baseline = [{"id": "VULN-001", "source": "bandit", "severity": "LOW",
+                     "description": "assert used", "file": "a.py", "line": 3}]
+        llm = [{"id": "VULN-001", "severity": "LOW", "category": "A05:2021-Security Misconfiguration",
+                "description": "assert used", "cve": "CVE-XXXX-XXXX"}]
+
+        merged, stats = orchestrator._merge_llm_enrichment(baseline, llm)
+
+        assert merged[0].get("cve") is None
+        assert stats["cve_rejected"] == 1
+
+    def test_curated_port_scanner_cves_are_untouched(self):
+        """Those are hand-written and checked, not generated, so they stand."""
+        baseline = [{"id": "VULN-001", "source": "port_scan", "severity": "CRITICAL",
+                     "description": "Telnet is open", "file": "", "line": 0,
+                     "cve": "CVE-1999-0246 (Telnet cleartext credentials)"}]
+
+        merged, _ = orchestrator._merge_llm_enrichment(baseline, [])
+
+        assert merged[0]["cve"] == "CVE-1999-0246 (Telnet cleartext credentials)"

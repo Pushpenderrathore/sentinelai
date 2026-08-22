@@ -78,6 +78,8 @@ The same findings always produce the same score, on Groq or on a local Ollama mo
 
 **Findings describe evidence, not assumptions.** Redirects are followed and reported at their destination. A CSP delivered by meta tag counts as applied; one set to report-only is reported as unenforced rather than missing. A header that the host physically cannot set is labelled with that constraint instead of advice you cannot act on. Bot-challenge pages are detected and refused rather than graded.
 
+**A CVE is never invented.** A CVE identifies a vulnerability in a specific piece of software. A missing security header is not one: it is a configuration weakness, which is what the CWE and OWASP labels are for. The analyzer used to ask the model for a CVE on every finding and accept anything beginning with `CVE-`, so findings that cannot have one were given plausible identifiers. Configuration findings now carry no model-supplied CVE at all, anything malformed or impossibly dated is dropped, and both refusals are counted in the agent log. The port scanner's CVEs are unaffected: those are hand-written and checked, not generated.
+
 **Patches are diffed against the real file.** On a repository scan the flagged line is read from the clone, so a patch can never claim to change code that is not there.
 
 **Port scanning requires authorisation.** Ports are probed only against hosts named in `AUTHORISED_SCAN_TARGETS`, and nothing is authorised by default. HTTP checks are unaffected.

@@ -17,14 +17,15 @@ import logging
 import os
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import AsyncGenerator, Literal, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
+from .llm_router import active_model_label, invoke_llm
 from .state import ScanState
-from .llm_router import invoke_llm, active_model_label
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +255,42 @@ _AUTHORITATIVE_SEVERITY = {"website", "semgrep", "bandit"}
 # are terse and factual, so the model's prose is an improvement there.
 _AUTHORITATIVE_WORDING = {"website"}
 
+# A CVE identifies a vulnerability in a specific piece of software. A missing
+# Referrer-Policy header is not one: it is a configuration weakness, which is
+# what the CWE and OWASP labels are for, and this scanner deliberately reports
+# no software version to match against anyway. Asked for a CVE on every finding,
+# the model supplied plausible-looking identifiers for findings that cannot have
+# one, and a bare "starts with CVE-" check waved them through.
+#
+# So the model is not trusted to name a CVE for these sources. The port scanner
+# keeps its own, which are hand-written and checked, not generated.
+_NO_CVE_SOURCES = {"website"}
+
+# CVE-YYYY-NNNN, four digits or more in the sequence.
+_CVE_RE = re.compile(r"^CVE-(\d{4})-(\d{4,})$", re.IGNORECASE)
+
+
+def _valid_cve(value: object, *, this_year: int | None = None) -> str | None:
+    """
+    Return a well-formed CVE id, or None.
+
+    Shape is all that can be checked without a network lookup, so this is a
+    filter and not proof the identifier exists. It rejects the malformed
+    (CVE-XXXX-XXXX, a bare year, prose wrapped around an id) and the impossible
+    (a year before the scheme began in 1999, or one in the future).
+    """
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    match = _CVE_RE.match(candidate)
+    if not match:
+        return None
+    year = int(match.group(1))
+    ceiling = this_year if this_year is not None else datetime.now(timezone.utc).year
+    if year < 1999 or year > ceiling:
+        return None
+    return candidate.upper()
+
 
 def _norm(text: str) -> str:
     return " ".join((text or "").lower().split())
@@ -320,6 +357,7 @@ def _merge_llm_enrichment(baseline: list[dict], llm_vulns: list[dict],
     limit = len(baseline) if enrichable is None else enrichable
 
     stats = {"enriched": 0, "dropped_by_llm": 0, "severity_kept": 0,
+             "cve_rejected": 0, "cve_refused": 0,
              "not_sent": max(0, len(baseline) - limit)}
     merged = []
 
@@ -341,11 +379,16 @@ def _merge_llm_enrichment(baseline: list[dict], llm_vulns: list[dict],
             # up as two entries in the report's category list.
             result["category"] = re.sub(r"^(A\d{2}:\d{4})\s*[-–—]\s*", r"\1-",
                                         category.strip())
-        cve = entry.get("cve")
-        if isinstance(cve, str) and cve.strip().upper().startswith("CVE-"):
-            result["cve"] = cve.strip()
-
         source = vuln.get("source")
+        if source not in _NO_CVE_SOURCES:
+            cve = _valid_cve(entry.get("cve"))
+            if cve:
+                result["cve"] = cve
+            elif entry.get("cve"):
+                stats["cve_rejected"] += 1
+        elif entry.get("cve"):
+            stats["cve_refused"] += 1
+
         if source in _AUTHORITATIVE_SEVERITY:
             stats["severity_kept"] += 1
         else:
@@ -596,8 +639,8 @@ def scanner_node(state: ScanState) -> dict:
 
 def _scan_github(state: ScanState) -> dict:
     """Clone repo and run Semgrep + Bandit static analysis."""
-    from tools.git_cloner import clone_repo, detect_tech_stack
     from tools.bandit_runner import run_bandit
+    from tools.git_cloner import clone_repo, detect_tech_stack
     from tools.semgrep_runner import run_semgrep
 
     try:
@@ -667,9 +710,10 @@ def _scan_github(state: ScanState) -> dict:
 
 def _scan_website(state: ScanState) -> dict:
     """Run HTTP-based security checks + port scan against a live website."""
-    from tools.website_scanner import scan_website
-    from tools.port_scanner import scan_ports
     from urllib.parse import urlparse
+
+    from tools.port_scanner import scan_ports
+    from tools.website_scanner import scan_website
 
     try:
         logs = [
@@ -866,8 +910,12 @@ Return a JSON array. Each object must have:
   "severity": "CRITICAL|HIGH|MEDIUM|LOW",
   "category": "OWASP label e.g. A03:2021-Injection",
   "description": "clear one-sentence description",
-  "cve": "CVE-XXXX-XXXX or null"
+  "cve": "a real CVE id you are certain applies, otherwise null"
 }}
+Use null for "cve" unless the finding is a known vulnerability in a specific,
+named software version. Configuration and hardening findings, such as a missing
+or misconfigured HTTP header, do not have CVEs: use null for those. A wrong CVE
+is far worse than no CVE, and any id that cannot be verified is discarded.
 Severity guide: CRITICAL = direct RCE/SQLi/auth bypass, HIGH = exploitable with low effort,
 MEDIUM = exploitable with moderate effort or requires chaining, LOW = hardening/best-practice.
 Output only a valid JSON array. No markdown."""),
@@ -926,6 +974,17 @@ Output only a valid JSON array. No markdown."""),
         logs.append(
             f"[VulnAnalyzer] {merge_stats['severity_kept']} findings kept the "
             f"scanner's severity (deterministic checks, not model judgement)"
+        )
+    if merge_stats["cve_refused"]:
+        logs.append(
+            f"[VulnAnalyzer] {merge_stats['cve_refused']} model-supplied CVE ids discarded: "
+            f"a configuration finding has no CVE, and this scanner reads no software "
+            f"version to match one against"
+        )
+    if merge_stats["cve_rejected"]:
+        logs.append(
+            f"[VulnAnalyzer] {merge_stats['cve_rejected']} model-supplied CVE ids discarded "
+            f"as malformed or impossible"
         )
     if merge_stats["dropped_by_llm"] and not degraded:
         # When nothing was enriched the "LLM enrichment unavailable" line below
