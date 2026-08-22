@@ -34,6 +34,18 @@ Risk score: 74/100 HIGH
 Open `http://localhost:8080/ftp` in a browser. `acquisitions.md` inside it opens
 with *"This document is confidential"*. The finding is real.
 
+> **Your run will show more findings than this, and that is expected.** The
+> listings here are the website portion. Scanning `localhost` also port scans
+> **your own machine**, so whatever you happen to be running appears too. On the
+> machine this was last verified on, three loopback findings were added:
+> PostgreSQL on 5432, DNS on 53, and the demo's own 8080.
+>
+> They are graded as what they are. PostgreSQL comes out MEDIUM, not the CRITICAL
+> a public database would score, and the text says why: *"listening on this
+> machine's loopback interface... it is not reachable from the network."* Point at
+> that during the demo. A scanner that called your laptop's database an internet
+> exposure would be easy to write and worth nothing.
+
 ## 3 - Fix it at the edge
 
 Move Juice Shop off the host port and put nginx in front of it:
@@ -57,7 +69,10 @@ returns 403 for `/ftp` and `/metrics`.
 Risk score: 40/100 MEDIUM
 ```
 
-Seven findings to one. Same scan, same scoring, nothing edited in the report.
+Seven website findings to one. Same scan, same scoring, nothing edited in the
+report. The loopback findings from step 2 are still there and still unchanged,
+because nothing about your own machine was fixed: verified end to end on
+2026-08-22, the full report reads **4 findings, 40/100 MEDIUM**.
 
 **The interesting part happened between passes.** The first hardening attempt
 scored 40/100 but reported a *new* finding - `Server information disclosed via
