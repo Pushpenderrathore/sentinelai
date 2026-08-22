@@ -201,3 +201,67 @@ class TestUnavailableIsDistinctFromCrash:
 
         with pytest.raises(TypeError):
             llm_router.invoke_llm([])
+
+
+class TestRetiredModel:
+    """
+    Groq shut down llama-3.1-8b-instant on 2026-08-16, which was this project's
+    default. The retirement arrives as a plain 400 matching neither an auth
+    failure nor anything transient, so every hosted scan died reporting
+    "internal error" while the deployment looked healthy.
+    """
+
+    def test_the_default_model_is_not_a_retired_one(self):
+        assert llm_router._DEFAULT_GROQ_MODEL != "llama-3.1-8b-instant"
+        assert llm_router._DEFAULT_GROQ_MODEL == "openai/gpt-oss-20b"
+
+    def test_env_overrides_the_default(self, monkeypatch):
+        monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        assert llm_router._groq_model() == "openai/gpt-oss-120b"
+
+    def test_a_blank_override_falls_back_to_the_default(self, monkeypatch):
+        monkeypatch.setenv("GROQ_MODEL", "   ")
+        assert llm_router._groq_model() == llm_router._DEFAULT_GROQ_MODEL
+
+    def test_decommissioned_is_recognised(self):
+        assert llm_router._is_model_error(Exception(
+            "Error code: 400 - The model `llama-3.1-8b-instant` has been "
+            "decommissioned and is no longer supported."))
+        assert llm_router._is_model_error(Exception("model_not_found"))
+
+    def test_a_rate_limit_is_not_a_model_error(self):
+        assert not llm_router._is_model_error(Exception("rate_limit_exceeded"))
+
+    def test_a_retired_model_names_itself_instead_of_saying_internal_error(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_valid")
+        monkeypatch.setenv("GROQ_MODEL", "llama-3.1-8b-instant")
+
+        class Retired:
+            def invoke(self, _messages):
+                raise Exception("Error code: 400 - The model `llama-3.1-8b-instant` "
+                                "has been decommissioned and is no longer supported.")
+
+        monkeypatch.setattr(llm_router, "_build_groq", lambda: Retired())
+
+        with pytest.raises(llm_router.LLMUnavailableError) as exc:
+            llm_router.invoke_llm([])
+
+        assert "llama-3.1-8b-instant" in exc.value.reason
+        assert "GROQ_MODEL" in exc.value.reason
+
+    def test_a_retired_model_does_not_burn_the_retry_budget(self, monkeypatch):
+        """It will never succeed, so retrying it three times just wastes the scan."""
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_valid")
+        calls = {"n": 0}
+
+        class Retired:
+            def invoke(self, _messages):
+                calls["n"] += 1
+                raise Exception("model_decommissioned")
+
+        monkeypatch.setattr(llm_router, "_build_groq", lambda: Retired())
+
+        with pytest.raises(llm_router.LLMUnavailableError):
+            llm_router.invoke_llm([])
+
+        assert calls["n"] == 1

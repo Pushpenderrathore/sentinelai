@@ -236,6 +236,7 @@ and Bandit.
 | Every fetch fails, console says it cannot reach the backend | CORS. The frontend is on a port not in `ALLOWED_ORIGINS`. Use port 3000, or add the port you are on. |
 | The dev server suddenly 500s on every page | Something ran `npm run build` underneath it and replaced `.next`. `rm -rf .next`, restart `npm run dev`. |
 | The scan starts but the agent feed never connects | `NEXT_PUBLIC_WS_URL` and `NEXT_PUBLIC_API_URL` are separate variables. If they point at different backends the POST succeeds and the WebSocket 403s. Set both. |
+| The panel says **AI backend unavailable** and names a model | Groq retired it. Unset `GROQ_MODEL` in the deployment so the code default applies, then redeploy. Schedule: console.groq.com/docs/deprecations. |
 | The panel says **AI backend unavailable** | Not a bug in the scan. The Groq key was rejected or its quota is gone, and there is no Ollama to fall back to. Check the key, then remember the router pins to the dead backend for 30 minutes unless the process restarts. |
 | Docker hangs | The colima VM is down after a reboot. `colima start`, then retry. |
 | The sweep plan is empty | Your scans are newer than the compressed windows. Use the 120-day preview link, which shows the plan regardless of age. |

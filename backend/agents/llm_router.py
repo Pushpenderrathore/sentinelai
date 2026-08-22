@@ -3,7 +3,7 @@ LLM Router — system-aware, Groq-first with Ollama fallback.
 
 Routing priority
 ----------------
-1. Groq (llama-3.1-8b-instant)     — fast cloud inference; requires internet +
+1. Groq (openai/gpt-oss-20b)       — fast cloud inference; requires internet +
                                       GROQ_API_KEY. Override with GROQ_MODEL.
 2. Ollama (local)                   — offline fallback.  The model is chosen
                                       automatically based on detected hardware
@@ -52,6 +52,13 @@ _active_backend:  str        = "groq"
 _groq_failed_at:  float|None = None
 _GROQ_RETRY_SECS: int        = 1800   # 30 minutes
 
+# Groq retires models on a published schedule and a retired id starts returning
+# 400 rather than serving traffic, so this default has a shelf life. The one it
+# replaced, llama-3.1-8b-instant, was shut down on 2026-08-16 and took the
+# hosted deployment down with it.
+# https://console.groq.com/docs/deprecations
+_DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
+
 # Transient Groq errors (e.g. 429 rate limit) are retried in-place with backoff
 # before failing over — this matters on hosts with no Ollama (e.g. Render), where
 # a single blip would otherwise lock every scan onto a dead backend.
@@ -85,7 +92,7 @@ def _build_groq():
         if _groq_llm is None:
             from langchain_groq import ChatGroq
             _groq_llm = ChatGroq(
-                model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+                model=_groq_model(),
                 temperature=0,
             )
         return _groq_llm
@@ -139,6 +146,26 @@ class LLMUnavailableError(RuntimeError):
         self.reason = reason
 
 
+def _groq_model() -> str:
+    return os.getenv("GROQ_MODEL", _DEFAULT_GROQ_MODEL).strip() or _DEFAULT_GROQ_MODEL
+
+
+def _is_model_error(exc: Exception) -> bool:
+    """
+    True when the provider will not serve the model it was asked for.
+
+    A retired model id is a configuration problem with a one-line fix, but it
+    arrives as a plain 400 that matches neither an auth failure nor anything
+    transient, so without this it fell through to the generic handler and was
+    reported as an internal error.
+    """
+    msg = str(exc).lower()
+    return any(k in msg for k in (
+        "decommissioned", "model_decommissioned", "model_not_found",
+        "no longer supported", "does not exist", "has been deprecated",
+    ))
+
+
 def _is_auth_error(exc: Exception) -> bool:
     """True when the provider rejected the credentials it was given."""
     exc_type = type(exc).__name__.lower()
@@ -185,7 +212,7 @@ def get_active_backend() -> str:
 def active_model_label() -> str:
     """Human-readable label for the currently active LLM (used in /health)."""
     if get_active_backend() == "groq":
-        return f"Groq / {os.getenv('GROQ_MODEL', 'llama-3.1-8b-instant')}"
+        return f"Groq / {_groq_model()}"
     model   = _ollama_model()
     profile = _detect_system()
     return f"Ollama / {model} (tier={profile.tier}, offline)"
@@ -241,6 +268,16 @@ def invoke_llm(messages: list) -> Any:
                 return _build_groq().invoke(messages)
             except Exception as exc:
                 if not _is_groq_error(exc):
+                    if _is_model_error(exc):
+                        # Retiring a model is the provider's decision, not a
+                        # fault here, and the fix is one environment variable.
+                        logger.error("llm_router: Groq will not serve model %s (%s)",
+                                     _groq_model(), exc)
+                        raise LLMUnavailableError(
+                            f"The AI provider no longer serves the configured model "
+                            f"({_groq_model()}). Set GROQ_MODEL to a current one.",
+                            f"Groq rejected model {_groq_model()}: {exc}",
+                        ) from exc
                     if _is_auth_error(exc):
                         # A rejected key is a deployment problem. Name it as one
                         # rather than letting it read as an internal error.

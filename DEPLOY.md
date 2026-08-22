@@ -33,6 +33,17 @@ Both platforms deploy from the repo, so everything below just connects to it.
 3. When prompted, set the env vars it can't infer:
    - **`GROQ_API_KEY`** → your key from [console.groq.com](https://console.groq.com)
    - **`ALLOWED_ORIGINS`** → leave blank for now (you'll set it in step 3).
+   - **`GROQ_MODEL`** → do not set it. The code default is kept current; a value
+     pinned here overrides it and will outlive the model it names.
+
+   > **Check the model before you rely on a deployment.** Groq retires models on
+   > a published schedule, and a retired id does not degrade, it returns 400 and
+   > every scan fails while `/health` still reports `ok`. `llama-3.1-8b-instant`
+   > was shut down on 2026-08-16 and took this deployment down with it. The
+   > schedule is at
+   > [console.groq.com/docs/deprecations](https://console.groq.com/docs/deprecations).
+   > A scan that fails this way now says **AI backend unavailable** and names the
+   > model, rather than reporting an internal error.
 4. First build takes a few minutes (installs semgrep/bandit). When it's live,
    **copy the URL shown in the Render dashboard.** It is usually
    `https://sentinelai-backend.onrender.com`, but if that hostname is already
