@@ -99,3 +99,105 @@ class TestRoutingWithoutKey:
         )
         assert llm_router.invoke_llm(["hi"]) == "ollama-reply"
         assert llm_router.get_active_backend() == "ollama"
+
+
+class TestUnavailableIsDistinctFromCrash:
+    """
+    A dead API key and a bug in the pipeline both used to reach the browser as
+    "Scan failed due to an internal error", so the only way to tell an
+    operational fault from a code fault was to read the server logs. These pin
+    the distinction that makes the failure legible.
+    """
+
+    def test_auth_errors_are_recognised(self):
+        class AuthenticationError(Exception):
+            pass
+
+        assert llm_router._is_auth_error(AuthenticationError("nope"))
+        assert llm_router._is_auth_error(Exception("Error code: 401 - invalid_api_key"))
+        assert llm_router._is_auth_error(Exception("Unauthorized"))
+
+    def test_a_rate_limit_is_not_an_auth_error(self):
+        assert not llm_router._is_auth_error(Exception("rate_limit_exceeded"))
+
+    def test_rejected_key_raises_unavailable_not_a_bare_exception(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_revoked")
+
+        class AuthenticationError(Exception):
+            pass
+
+        class DeadGroq:
+            def invoke(self, _messages):
+                raise AuthenticationError("Error code: 401 - invalid_api_key")
+
+        monkeypatch.setattr(llm_router, "_build_groq", lambda: DeadGroq())
+
+        with pytest.raises(llm_router.LLMUnavailableError) as exc:
+            llm_router.invoke_llm([])
+
+        assert "rejected" in exc.value.reason.lower()
+        assert "api key" in exc.value.reason.lower()
+
+    def test_the_reason_leaks_no_key_material_or_traceback(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_supersecret_value")
+
+        class AuthenticationError(Exception):
+            pass
+
+        class DeadGroq:
+            def invoke(self, _messages):
+                raise AuthenticationError("401 invalid_api_key gsk_supersecret_value")
+
+        monkeypatch.setattr(llm_router, "_build_groq", lambda: DeadGroq())
+
+        with pytest.raises(llm_router.LLMUnavailableError) as exc:
+            llm_router.invoke_llm([])
+
+        assert "gsk_supersecret_value" not in exc.value.reason
+        assert "Traceback" not in exc.value.reason
+
+    def test_both_backends_down_raises_unavailable(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_example")
+        monkeypatch.setattr(llm_router, "_GROQ_MAX_ATTEMPTS", 1)
+        monkeypatch.setattr(llm_router, "_GROQ_RETRY_BACKOFF", 0)
+
+        class RateLimited:
+            def invoke(self, _messages):
+                raise Exception("rate_limit_exceeded: tokens per day")
+
+        def no_ollama():
+            raise ConnectionRefusedError("connection refused")
+
+        monkeypatch.setattr(llm_router, "_build_groq", lambda: RateLimited())
+        monkeypatch.setattr(llm_router, "_build_ollama", no_ollama)
+
+        with pytest.raises(llm_router.LLMUnavailableError) as exc:
+            llm_router.invoke_llm([])
+
+        assert "quota" in exc.value.reason.lower() or "rate-limited" in exc.value.reason.lower()
+
+    def test_no_provider_at_all_says_so(self, monkeypatch):
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+        def no_ollama():
+            raise ConnectionRefusedError("connection refused")
+
+        monkeypatch.setattr(llm_router, "_build_ollama", no_ollama)
+
+        with pytest.raises(llm_router.LLMUnavailableError) as exc:
+            llm_router.invoke_llm([])
+
+        assert "no ai provider is configured" in exc.value.reason.lower()
+
+    def test_a_real_bug_still_surfaces_as_itself(self, monkeypatch):
+        """A programming error must not be dressed up as an outage."""
+        monkeypatch.setenv("GROQ_API_KEY", "gsk_example")
+
+        class BrokenGroq:
+            def invoke(self, _messages):
+                raise TypeError("unhashable type: 'dict'")
+
+        monkeypatch.setattr(llm_router, "_build_groq", lambda: BrokenGroq())
+
+        with pytest.raises(TypeError):
+            llm_router.invoke_llm([])

@@ -82,6 +82,8 @@ The same findings always produce the same score, on Groq or on a local Ollama mo
 
 **Port scanning requires authorisation.** Ports are probed only against hosts named in `AUTHORISED_SCAN_TARGETS`, and nothing is authorised by default. HTTP checks are unaffected.
 
+**A failed scan says which kind of failure it was.** An outage and a bug are not the same problem, and the report distinguishes them. If no language model can serve the request, because the provider rejected the API key or the quota is exhausted and there is no local model to fall back on, the scan reports `AI backend unavailable` and names the cause. Only a genuine fault in the pipeline reports an internal error. Either way the run is marked failed and nothing is written to scan history, so a scan that could not run can never be mistaken for a clean one. The message carries no key material and no traceback; those stay in the server log.
+
 ### What it does not do
 
 Website mode is a passive configuration and exposure audit. It reads headers, cookies, TLS and known paths; it never sends an attack payload, so it does not find SQL injection, XSS or broken access control in a running app. Code-level vulnerabilities are the repository scanner's job, via Semgrep and Bandit.

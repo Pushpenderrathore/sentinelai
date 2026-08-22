@@ -38,6 +38,7 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
   const [activeNode, setActiveNode] = useState<string>("")
   const [scanDone, setScanDone]   = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
+  const [scanErrorKind, setScanErrorKind] = useState<string | null>(null)
 
   const { status } = useWebSocket(wsUrl, (msg) => {
     if (msg.type === "update") {
@@ -52,8 +53,13 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
     }
     if (msg.type === "error") {
       const message = (msg.message as string) ?? "Scan failed due to an internal error"
-      setLogs((prev) => [...prev, `[ERROR] ${message}`])
+      const kind    = (msg.kind as string) ?? "internal"
+      setLogs((prev) => [
+        ...prev,
+        `[${kind === "llm_unavailable" ? "UNAVAILABLE" : "ERROR"}] ${message}`,
+      ])
       setScanError(message)
+      setScanErrorKind(kind)
     }
   })
 
@@ -151,6 +157,7 @@ export default function ScanDashboard({ params }: { params: { id: string } }) {
                 status={status}
                 done={scanDone}
                 error={scanError}
+                errorKind={scanErrorKind}
                 onComplete={() => {
                   resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
                 }}

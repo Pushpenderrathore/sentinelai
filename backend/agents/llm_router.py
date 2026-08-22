@@ -122,6 +122,33 @@ def _groq_configured() -> bool:
     return bool(os.getenv("GROQ_API_KEY", "").strip())
 
 
+class LLMUnavailableError(RuntimeError):
+    """
+    Raised when no language model can serve a request.
+
+    This is an operational fault, not a bug in the pipeline, and the two are
+    worth telling apart: a rejected API key or an exhausted quota is fixed in
+    the deployment's configuration, while an internal error is fixed in the
+    code. `reason` is the short form written for whoever is looking at the
+    screen, and it deliberately carries no key material and no traceback. The
+    full exception still reaches the logs.
+    """
+
+    def __init__(self, reason: str, detail: str = "") -> None:
+        super().__init__(detail or reason)
+        self.reason = reason
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    """True when the provider rejected the credentials it was given."""
+    exc_type = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    return ("authentication" in exc_type
+            or "invalid_api_key" in msg
+            or "unauthorized" in msg
+            or "401" in msg)
+
+
 def _is_groq_error(exc: Exception) -> bool:
     """Return True only for transient errors that justify falling back to Ollama."""
     exc_type = type(exc).__name__.lower()
@@ -214,7 +241,15 @@ def invoke_llm(messages: list) -> Any:
                 return _build_groq().invoke(messages)
             except Exception as exc:
                 if not _is_groq_error(exc):
-                    raise   # auth error, bad prompt, etc. — don't swallow
+                    if _is_auth_error(exc):
+                        # A rejected key is a deployment problem. Name it as one
+                        # rather than letting it read as an internal error.
+                        logger.error("llm_router: Groq rejected the API key (%s)", exc)
+                        raise LLMUnavailableError(
+                            "The AI provider rejected the configured API key.",
+                            f"Groq authentication failed: {exc}",
+                        ) from exc
+                    raise   # bad prompt, programming error — don't swallow
                 last_exc = exc
                 if attempt < _GROQ_MAX_ATTEMPTS - 1:
                     delay = _GROQ_RETRY_BACKOFF * (2 ** attempt)
@@ -256,7 +291,11 @@ def _invoke_ollama(messages: list) -> Any:
         profile = _detect_system()
         groq_state = ("rate-limited / no internet" if _groq_configured()
                       else "no GROQ_API_KEY configured")
-        raise RuntimeError(
+        reason = ("The AI provider is rate-limited or out of quota, and no local "
+                  "model is available to fall back to."
+                  if _groq_configured() else
+                  "No AI provider is configured and no local model is running.")
+        raise LLMUnavailableError(reason,
             f"Both Groq and Ollama are unavailable.\n"
             f"Groq: {groq_state}.\n"
             f"Ollama error: {exc}\n\n"

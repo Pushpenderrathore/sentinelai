@@ -67,6 +67,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 from agents.orchestrator import _graph, _initial_state
+from agents.llm_router import LLMUnavailableError
 from tools.url_guard import assert_safe_target, UnsafeTargetError
 from tools.git_cloner import cleanup_repo, _repo_dest
 from tools import retention as rt
@@ -334,10 +335,22 @@ async def _run_scan(repo_url: str, scan_id: str) -> None:
         await queue.put({"type": "error", "scan_id": scan_id,
                          "message": f"Scan timed out after {int(SCAN_TIMEOUT_SECS)}s"})
 
+    except LLMUnavailableError as exc:
+        # An operational fault, not a bug. Collapsing it into "internal error"
+        # meant a dead API key and a crash in the pipeline looked identical from
+        # the browser, and only the server logs could tell them apart.
+        logger.error("Scan %s could not reach a language model: %s", scan_id, exc)
+        _scans[scan_id]["status"] = "error"
+        await queue.put({"type": "error", "scan_id": scan_id,
+                         "kind": "llm_unavailable",
+                         "message": f"{exc.reason} The scan could not run. "
+                                    "Nothing was written to scan history."})
+
     except Exception:
         logger.exception("Scan %s crashed", scan_id)
         _scans[scan_id]["status"] = "error"
         await queue.put({"type": "error", "scan_id": scan_id,
+                         "kind": "internal",
                          "message": "Scan failed due to an internal error. See server logs."})
 
     finally:

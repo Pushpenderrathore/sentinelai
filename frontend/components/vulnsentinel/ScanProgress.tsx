@@ -24,6 +24,8 @@ interface ScanProgressProps {
   done: boolean
   /** Error message if the scan failed. */
   error?: string | null
+  /** "llm_unavailable" is an operational fault, not a crash: shown differently. */
+  errorKind?: string | null
   onComplete?: () => void
   onRetry?: () => void
 }
@@ -91,10 +93,10 @@ function CheckCircle() {
   )
 }
 
-function ErrorCircle() {
+function ErrorCircle({ hue = "255,51,102" }: { hue?: string }) {
   return (
     <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="12" r="10" fill="#ff3366" />
+      <circle cx="12" cy="12" r="10" fill={`rgb(${hue})`} />
       <path
         d="M8 8l8 8M16 8l-8 8"
         stroke="#0d1117"
@@ -113,16 +115,18 @@ function PendingCircle() {
   )
 }
 
-function StepIcon({ status }: { status: AgentStatus }) {
+function StepIcon({ status, hue }: { status: AgentStatus; hue?: string }) {
   switch (status) {
     case "running": return <SpinnerRing />
     case "done":    return <CheckCircle />
-    case "error":   return <ErrorCircle />
+    case "error":   return <ErrorCircle hue={hue} />
     default:        return <PendingCircle />
   }
 }
 
-function AgentRow({ agent, isLast }: { agent: AgentState; isLast: boolean }) {
+function AgentRow({ agent, isLast, errHue = "255,51,102" }: {
+  agent: AgentState; isLast: boolean; errHue?: string
+}) {
   const isRunning = agent.status === "running"
   const isDone    = agent.status === "done"
   const isError   = agent.status === "error"
@@ -145,7 +149,7 @@ function AgentRow({ agent, isLast }: { agent: AgentState; isLast: boolean }) {
 
       {/* Icon column */}
       <div className="relative z-10 shrink-0 pt-0.5">
-        <StepIcon status={agent.status} />
+        <StepIcon status={agent.status} hue={errHue} />
       </div>
 
       {/* Content column */}
@@ -175,7 +179,7 @@ function AgentRow({ agent, isLast }: { agent: AgentState; isLast: boolean }) {
               style={{
                 color: isRunning ? "#ffffff"
                      : isDone    ? "#cbd5e1"
-                     : isError   ? "#ff3366"
+                     : isError   ? `rgb(${errHue})`
                      : "#64748b",
               }}
             >
@@ -183,7 +187,7 @@ function AgentRow({ agent, isLast }: { agent: AgentState; isLast: boolean }) {
             </span>
             <span
               className="text-xs transition-colors duration-300"
-              style={{ color: isError ? "#ff336688" : "#64748b" }}
+              style={{ color: isError ? `rgba(${errHue},0.53)` : "#64748b" }}
             >
               {agent.description}
             </span>
@@ -193,7 +197,7 @@ function AgentRow({ agent, isLast }: { agent: AgentState; isLast: boolean }) {
           {isError && agent.message && (
             <div
               className="mt-1.5 font-mono text-[11px] leading-relaxed break-all"
-              style={{ color: "#ff336699" }}
+              style={{ color: `rgba(${errHue},0.6)` }}
             >
               {agent.message}
             </div>
@@ -206,7 +210,12 @@ function AgentRow({ agent, isLast }: { agent: AgentState; isLast: boolean }) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function ScanProgress({ activeNode, status, done, error, onComplete, onRetry }: ScanProgressProps) {
+export default function ScanProgress({ activeNode, status, done, error, errorKind, onComplete, onRetry }: ScanProgressProps) {
+  // A dead API key and a crash in the pipeline are both failures, but only one
+  // of them is fixed by touching the code. Colour and wording say which.
+  const opFault  = errorKind === "llm_unavailable"
+  const errHue   = opFault ? "255,184,0" : "255,51,102"
+  const errSolid = opFault ? "#ffb800" : "#ff3366"
   const resultsRef = useRef<HTMLDivElement | null>(null)
 
   // Highest backend node seen so far (it finishes before being emitted), so
@@ -251,7 +260,7 @@ export default function ScanProgress({ activeNode, status, done, error, onComple
 
   const headerLabel =
     done   ? "Scan complete"
-  : error  ? "Scan failed"
+  : error  ? (errorKind === "llm_unavailable" ? "AI backend unavailable" : "Scan failed")
   : finalising ? "Finalising report…"
   : runningAgent ? runningAgent.label
   : status === "connecting" ? "Connecting…"
@@ -259,14 +268,14 @@ export default function ScanProgress({ activeNode, status, done, error, onComple
 
   const connLabel =
     done   ? "COMPLETE"
-  : error  ? "ERROR"
+  : error  ? (errorKind === "llm_unavailable" ? "UNAVAILABLE" : "ERROR")
   : status === "open"       ? "LIVE"
   : status === "connecting" ? "CONNECTING"
   : "CLOSED"
 
   const connColor =
     done   ? "#00ff88"
-  : error  ? "#ff3366"
+  : error  ? (errorKind === "llm_unavailable" ? "#ffb800" : "#ff3366")
   : status === "open"       ? "#00ff88"
   : status === "connecting" ? "#ffb800"
   : "#64748b"
@@ -337,7 +346,7 @@ export default function ScanProgress({ activeNode, status, done, error, onComple
           <span
             className="text-xs font-mono tabular-nums"
             style={{
-              color: done ? "#00ff88" : error ? "#ff3366" : "#00d4ff",
+              color: done ? "#00ff88" : error ? errSolid : "#00d4ff",
               transition: "color 0.5s",
             }}
           >
@@ -357,7 +366,7 @@ export default function ScanProgress({ activeNode, status, done, error, onComple
               background: done
                 ? "linear-gradient(90deg, #00d4ff, #00ff88)"
                 : error
-                ? "linear-gradient(90deg, #ff3366, #ff6688)"
+                ? `linear-gradient(90deg, rgb(${errHue}), rgba(${errHue},0.65))`
                 : "linear-gradient(90deg, #00d4ff, #0099bb)",
               transition: "width 0.6s cubic-bezier(0.4,0,0.2,1), background 0.5s",
               borderRadius: "9999px",
@@ -372,8 +381,8 @@ export default function ScanProgress({ activeNode, status, done, error, onComple
         <div
           className="mx-5 mt-3 rounded-xl px-4 py-3 flex items-start gap-3"
           style={{
-            background: "rgba(255,51,102,0.08)",
-            border:     "1px solid rgba(255,51,102,0.25)",
+            background: `rgba(${errHue},0.08)`,
+            border:     `1px solid rgba(${errHue},0.25)`,
             animation:  "fadeIn 0.3s ease-out",
           }}
         >
@@ -381,33 +390,39 @@ export default function ScanProgress({ activeNode, status, done, error, onComple
             className="w-4 h-4 shrink-0 mt-0.5"
             viewBox="0 0 20 20"
             fill="none"
-            style={{ color: "#ff3366" }}
+            style={{ color: errSolid }}
           >
             <circle cx="10" cy="10" r="9" stroke="currentColor" strokeWidth="1.5" />
             <path d="M10 6v4M10 13.5v.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
           </svg>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium mb-1" style={{ color: "#ff3366" }}>
-              Scan error
+            <p className="text-xs font-medium mb-1" style={{ color: errSolid }}>
+              {opFault ? "AI backend unavailable" : "Scan error"}
             </p>
-            <p className="text-xs break-words" style={{ color: "#ff336699" }}>
+            <p className="text-xs break-words" style={{ color: `rgba(${errHue},0.6)` }}>
               {error}
             </p>
+            {opFault && (
+              <p className="text-xs mt-1.5 break-words" style={{ color: `rgba(${errHue},0.45)` }}>
+                This is a configuration problem in the deployment, not a fault in the scan
+                pipeline. Check the provider API key and its remaining quota.
+              </p>
+            )}
           </div>
           {onRetry && (
             <button
               onClick={onRetry}
               className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg transition-all duration-150 active:scale-95"
               style={{
-                background: "rgba(255,51,102,0.12)",
-                border:     "1px solid rgba(255,51,102,0.3)",
-                color:      "#ff3366",
+                background: `rgba(${errHue},0.12)`,
+                border:     `1px solid rgba(${errHue},0.3)`,
+                color:      errSolid,
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,51,102,0.2)"
+                (e.currentTarget as HTMLButtonElement).style.background = `rgba(${errHue},0.2)`
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,51,102,0.12)"
+                (e.currentTarget as HTMLButtonElement).style.background = `rgba(${errHue},0.12)`
               }}
             >
               Retry Scan
@@ -419,7 +434,7 @@ export default function ScanProgress({ activeNode, status, done, error, onComple
       {/* ── Agent stepper ── */}
       <div className="px-5 pt-5 pb-2">
         {agents.map((agent, i) => (
-          <AgentRow key={agent.key} agent={agent} isLast={i === agents.length - 1} />
+          <AgentRow key={agent.key} agent={agent} isLast={i === agents.length - 1} errHue={errHue} />
         ))}
       </div>
 
