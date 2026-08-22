@@ -75,10 +75,147 @@ export const getDomainHistory   = (domain: string) => req<ScanHistoryRecord[]>(`
 export const getScanHistory     = (scan_id: string) => req<ScanHistoryRecord>(`/api/scans/history/${scan_id}`)
 export const compareScans       = (a: string, b: string) => req<ScanComparison>(`/api/scans/history/compare/${a}/${b}`)
 
+// ── Retention / data lifecycle ────────────────────────────────
+
+export type LifecycleState = "active" | "archived" | "trashed" | "purged"
+export type Outcome = "complete" | "partial" | "blocked" | "unresolved"
+
+export interface ComponentResult {
+  component: string
+  outcome:   string
+  detail:    string
+}
+
+export interface Receipt {
+  operation:  string
+  scan_id:    string
+  outcome:    Outcome
+  state:      LifecycleState
+  components: ComponentResult[]
+  at:         number
+  actor:      string
+  note:       string
+  tombstone:  { payload_sha256: string; findings_erased: number; mode: string } | null
+}
+
+export interface RetentionPolicy {
+  archive_after_days: number
+  trash_after_days:   number
+  purge_after_days:   number
+  default_purge_mode: string
+  description:        string
+}
+
+export interface RetentionItem {
+  scan_id:         string
+  domain:          string
+  repo_url:        string
+  scan_date:       string
+  timestamp:       number
+  risk_score:      number
+  overall_risk:    string
+  total_vulns:     number
+  severity:        { critical: number; high: number; medium: number; low: number }
+  state:           LifecycleState
+  hold:            { reason: string; placed_at: number; by: string } | null
+  payload_present: boolean
+  payload_bytes:   number | null
+  archived_at:     number | null
+  trashed_at:      number | null
+  purged_at:       number | null
+  purge_mode:      string | null
+  last_operation:  string | null
+  last_outcome:    Outcome | null
+  residue:         string[]
+  age_days:        number
+  next_due_action: string | null
+  next_due_at:     number | null
+  days_until_due:  number | null
+}
+
+export interface RetentionInventory {
+  policy:        RetentionPolicy
+  counts:        Record<LifecycleState, number>
+  held:          number
+  with_residue:  number
+  total:         number
+  archive_files: number
+  archive_bytes: number
+  items:         RetentionItem[]
+}
+
+export interface LedgerVerification {
+  entries: number
+  outcome: Outcome
+  broken:  { seq: number; reason: string }[]
+  detail:  string
+}
+
+export interface AuditEntry extends Receipt {
+  seq:        number
+  prev_hash:  string
+  entry_hash: string
+}
+
+export interface VerifyResult {
+  scan_id:    string
+  state:      string
+  outcome:    Outcome
+  checked_at: number
+  checks:     ComponentResult[]
+  residue:    string[]
+  detail:     string
+}
+
+export interface SweepResult {
+  dry_run: boolean
+  as_of:   number
+  outcome: Outcome
+  planned: { scan_id: string; domain: string; state: string; action: string; age_days: number; held: boolean }[]
+  receipts: Receipt[]
+  detail:  string
+}
+
+export const getRetentionInventory = (state?: string) =>
+  req<RetentionInventory>(`/api/retention/scans${state ? `?state=${state}` : ""}`)
+
+export const getRetentionPolicy = () =>
+  req<{ policy: RetentionPolicy; counts: Record<string, number>; held: number; with_residue: number
+        total: number; archive_files: number; archive_bytes: number; audit: LedgerVerification }>(
+    "/api/retention/policy")
+
+const lifecycle = (scan_id: string, op: string) =>
+  req<Receipt>(`/api/retention/scans/${scan_id}/${op}`, { method: "POST" })
+
+export const archiveScan = (scan_id: string) => lifecycle(scan_id, "archive")
+export const restoreScan = (scan_id: string) => lifecycle(scan_id, "restore")
+export const trashScan   = (scan_id: string) => lifecycle(scan_id, "trash")
+
+export const purgeScan = (scan_id: string, mode: "full" | "payload") =>
+  req<Receipt>(`/api/retention/scans/${scan_id}/purge?mode=${mode}`, { method: "POST" })
+
+export const placeHold = (scan_id: string, reason: string) =>
+  req<Receipt>(`/api/retention/scans/${scan_id}/hold`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+
+export const releaseHold = (scan_id: string) =>
+  req<Receipt>(`/api/retention/scans/${scan_id}/hold`, { method: "DELETE" })
+
+export const verifyScanErasure = (scan_id: string) =>
+  req<VerifyResult>(`/api/retention/scans/${scan_id}/verify`)
+
+export const runSweep = (dryRun: boolean, asOf?: number) =>
+  req<SweepResult>(`/api/retention/sweep?dry_run=${dryRun}${asOf ? `&as_of=${asOf}` : ""}`, {
+    method: "POST",
+  })
+
+export const getAuditLedger = (limit = 100) =>
+  req<{ verification: LedgerVerification; entries: AuditEntry[] }>(`/api/retention/audit?limit=${limit}`)
+
 export const deleteScanHistory = (scan_id: string) =>
-  fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/scans/history/${scan_id}`, {
-    method: "DELETE",
-  }).then((r) => { if (!r.ok && r.status !== 204) throw new Error("Delete failed") })
+  req<Receipt>(`/api/scans/history/${scan_id}`, { method: "DELETE" })
 
 // ── ExamGuard ─────────────────────────────────────────────────
 

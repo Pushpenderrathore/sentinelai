@@ -157,6 +157,7 @@ export default function DomainHistoryPage({ params }: { params: { domain: string
   const [comparing,   setComparing]   = useState(false)
   const [deleting,    setDeleting]    = useState<string | null>(null)
   const [confirmed,   setConfirmed]   = useState<string | null>(null)
+  const [notice,      setNotice]      = useState<{ kind: string; text: string } | null>(null)
 
   useEffect(() => {
     getDomainHistory(domain)
@@ -179,11 +180,19 @@ export default function DomainHistoryPage({ params }: { params: { domain: string
     setDeleting(scan_id)
     setConfirmed(null)
     try {
-      await deleteScanHistory(scan_id)
+      const receipt = await deleteScanHistory(scan_id)
+      if (receipt.outcome === "blocked") {
+        setNotice({ kind: "blocked", text: receipt.components[0]?.detail ?? "Delete was refused." })
+        return
+      }
       setScans((prev) => prev.filter((s) => s.scan_id !== scan_id))
       setComparison(null)
+      setNotice({
+        kind: receipt.outcome,
+        text: "Moved to trash. The findings are retained so this can be undone.",
+      })
     } catch {
-      setError("Failed to delete scan.")
+      setNotice({ kind: "unresolved", text: "Delete failed. Nothing was changed." })
     } finally {
       setDeleting(null)
     }
@@ -231,6 +240,21 @@ export default function DomainHistoryPage({ params }: { params: { domain: string
 
       {!loading && scans.length > 0 && (
         <main className="flex-1 max-w-4xl mx-auto w-full px-5 py-8 space-y-6">
+
+          {notice && (
+            <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${
+              notice.kind === "blocked"    ? "border-orange-500/30 bg-orange-500/10 text-orange-200" :
+              notice.kind === "unresolved" ? "border-red-500/30 bg-red-500/10 text-red-200" :
+                                             "border-cyan-500/30 bg-cyan-500/10 text-cyan-100"}`}>
+              <span className="font-mono text-xs uppercase tracking-wide shrink-0 pt-0.5">
+                {notice.kind}
+              </span>
+              <span className="flex-1">{notice.text}</span>
+              <a href="/retention" className="shrink-0 underline hover:no-underline">Retention</a>
+              <button onClick={() => setNotice(null)}
+                      className="shrink-0 text-current/60 hover:text-current">✕</button>
+            </div>
+          )}
 
           {/* Trend chart */}
           <TrendChart scans={sortedForChart} />

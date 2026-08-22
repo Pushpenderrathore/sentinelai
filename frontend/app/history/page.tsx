@@ -96,6 +96,11 @@ export default function HistoryPage() {
           <span className="text-xs text-sentinel-muted font-mono">
             {domains.length} site{domains.length !== 1 ? "s" : ""} · {totalScans} scan{totalScans !== 1 ? "s" : ""}
           </span>
+          <a href="/retention"
+             className="text-xs px-3 py-1.5 rounded-lg border border-white/10 text-sentinel-muted
+                        hover:text-white hover:bg-white/5 transition-colors font-medium">
+            Retention
+          </a>
           <a href="/scan"
              className="text-xs px-3 py-1.5 rounded-lg bg-sentinel-cyan/10 text-sentinel-cyan
                         border border-sentinel-cyan/20 hover:bg-sentinel-cyan/20 transition-colors font-medium">

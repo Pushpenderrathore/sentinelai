@@ -37,3 +37,7 @@ backend/yolov8n.pt
 
 # Runtime scan history (generated at runtime)
 backend/scan_history.json
+
+# Retention stores (generated at runtime)
+backend/retention_archive/
+backend/retention_audit.jsonl

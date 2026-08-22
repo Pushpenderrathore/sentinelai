@@ -10,7 +10,7 @@
 
 SentinelAI is a multi-agent AI platform that detects threats autonomously - in **source code** and in **online exams** - without requiring human intervention. Two real-world problems. One agentic engine.
 
-**Current release: [v1.0.0](https://github.com/Pushpenderrathore/sentinelai/releases/tag/v1.0.0)** - both scan modes working end to end, 285 tests, six-job CI. The running API reports its own version at `GET /health`.
+**Current release: [v1.0.0](https://github.com/Pushpenderrathore/sentinelai/releases/tag/v1.0.0)** - both scan modes working end to end, 332 tests, six-job CI. The running API reports its own version at `GET /health`.
 
 ---
 
@@ -18,6 +18,7 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously - in *
 
 - [Modules](#modules)
 - [Why the findings can be trusted](#why-the-findings-can-be-trusted)
+- [Data retention](#data-retention)
 - [ML Integration](#ml-integration)
 - [Demo](#demo)
 - [VulnSentinel - Screenshots](#-vulnsentinel---screenshots)
@@ -84,6 +85,67 @@ The same findings always produce the same score, on Groq or on a local Ollama mo
 ### What it does not do
 
 Website mode is a passive configuration and exposure audit. It reads headers, cookies, TLS and known paths; it never sends an attack payload, so it does not find SQL injection, XSS or broken access control in a running app. Code-level vulnerabilities are the repository scanner's job, via Semgrep and Bandit.
+
+---
+
+## Data retention
+
+A scan report is a liability as well as an asset. It is a list of the ways into
+a system, written down and kept. So SentinelAI treats a report as something with
+a lifecycle rather than a row that lives forever, and it will tell you exactly
+what happened when you ask for one to go away.
+
+**A scan does not live in one place.** Its row sits in `scan_history.json`, its
+findings can be offloaded to a cold archive file, a repository scan leaves a
+clone in a temp workspace, and a running scan also holds an in-process session.
+"Delete this scan" therefore touches several stores, and any of them can
+succeed, refuse, or fail on its own.
+
+**So every operation answers with a receipt**, one line per store plus a single
+completion signal:
+
+| Signal | Meaning |
+|--------|---------|
+| `complete` | Every store reached its intended end state. |
+| `partial` | The operation ran, but scan data is still retained somewhere on purpose. |
+| `blocked` | A legal hold or a running scan refused it. Nothing changed. |
+| `unresolved` | A store failed, or a store disagrees with the ledger. |
+
+Those four are not decoration. A delete is **`partial`**, not `complete`,
+because the findings are kept so it can be undone. A purge under legal hold is
+**`blocked`**, and the receipt names the hold and its reason. Purging findings
+while keeping the score row is **`partial`**, and the receipt says which half
+survived and why.
+
+```
+purge · 55667788 → PARTIAL
+  complete            Findings payload    9 findings, their patches and the executive summary erased.
+  retained            History record      Score, severity counts and scan date kept so this site's
+                                          risk trend stays continuous. No vulnerability detail remains.
+  retained_by_policy  Audit tombstone     Tombstone written to the ledger: scan id, domain and payload
+                                          hash a8c1e7630e38. It proves the erasure happened and
+                                          contains no finding data.
+```
+
+**The claim is checkable.** `GET /api/retention/scans/{id}/verify` ignores the
+ledger and goes back to the stores themselves - the history file, the archive
+directory, the temp workspace, the in-process registry - and reports what is
+actually there. If a clone survived a purge, verification says `unresolved` and
+names the path. A tool that reports its own erasure without checking is asking
+to be believed; this one produces the evidence.
+
+**The record cannot be quietly rewritten.** Every operation is appended to
+`retention_audit.jsonl`, and each entry carries the hash of the entry before it.
+Editing or removing any past entry breaks every hash after it, which
+`GET /api/retention/audit` reports as `unresolved`.
+
+**The schedule runs itself.** Scans are archived, then trashed, then purged on
+the thresholds in `.env`. `POST /api/retention/sweep` defaults to a dry run, and
+`as_of` evaluates the plan at a future date, so the whole schedule can be shown
+without waiting for it. A sweep that archives four scans and is refused on a
+fifth reports `partial` and names the fifth.
+
+The console is at **`/retention`**.
 
 ---
 
@@ -658,6 +720,28 @@ Both models run entirely client-side (WebGL) with no cloud API calls. When a pho
 | `GET` | `/api/report/{scan_id}` | Fetch completed report |
 | `GET` | `/api/scans` | List all scans |
 
+### Retention
+
+Every destructive endpoint returns a receipt: one result per store, plus a single
+outcome of `complete`, `partial`, `blocked` or `unresolved`.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/retention/policy` | Schedule, state counts, ledger health |
+| `GET` | `/api/retention/scans` | Inventory with state, hold and next due action |
+| `POST` | `/api/retention/scans/{id}/archive` | Offload findings to the cold archive |
+| `POST` | `/api/retention/scans/{id}/restore` | Undo a delete, rehydrate an archive |
+| `POST` | `/api/retention/scans/{id}/trash` | Reversible delete |
+| `POST` | `/api/retention/scans/{id}/purge` | Irreversible erasure · `?mode=full\|payload` |
+| `POST` | `/api/retention/scans/{id}/hold` | Legal hold · blocks every destructive step |
+| `DELETE` | `/api/retention/scans/{id}/hold` | Release the hold |
+| `GET` | `/api/retention/scans/{id}/verify` | Re-check every store for residue |
+| `POST` | `/api/retention/sweep` | Apply the policy · `?dry_run` `?as_of` |
+| `GET` | `/api/retention/audit` | Hash-chained ledger of every operation |
+
+`DELETE /api/scans/history/{id}` now routes into the lifecycle as a reversible
+delete and returns a receipt rather than a bare `204`.
+
 ### ExamGuard
 
 | Method | Endpoint | Description |
@@ -676,7 +760,7 @@ Both models run entirely client-side (WebGL) with no cloud API calls. When a pho
 ## Testing & CI
 
 ```bash
-cd backend && pytest          # 285 tests
+cd backend && pytest          # 332 tests
 ruff check .                  # lint
 ```
 

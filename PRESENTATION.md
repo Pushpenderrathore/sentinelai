@@ -136,6 +136,56 @@ GitHub repo URL  or  live website URL
 
 ---
 
+### Slide 6A - Challenge #921: Data Retention (round-2 addition)
+**Insert after Slide 6. The remaining slides shift by one.**
+
+**Visual:** The `/retention` console, then one receipt modal filling the screen.
+
+**The framing sentence:** *"A scan report is a list of the ways into a system,
+written down and kept. That is an asset and a liability, so we made it something
+with a lifecycle."*
+
+**What to show, in this order:**
+
+1. **The board.** Six scans across four states - active, archived, trashed,
+   purged - with the policy thresholds above them. Point out that the states are
+   not labels: the archived scan's findings are physically in a different file,
+   and the trashed one is gone from `/history` and from the trend comparison.
+
+2. **Delete, and read the signal.** Delete a scan and open the receipt. It says
+   **`partial`**, not complete. *"It reports partial because it is telling the
+   truth: the findings are still there so you can undo it. A tool that said
+   'complete' here would be lying to you."*
+
+3. **Legal hold, then purge.** Place a hold with a reason, then try to purge.
+   **`blocked`** - and the receipt names the hold and quotes the reason. Nothing
+   moved. *"This is the state that proves the other three mean something."*
+
+4. **Purge, then verify.** Purge the findings, then hit **Verify erasure**. The
+   verification ignores the ledger and re-reads the history file, the archive
+   directory, the temp workspace and the in-process registry. *"The tool does not
+   ask you to believe its own report. It goes and checks."*
+
+5. **The killer beat if you have 20 spare seconds.** In a terminal, edit one line
+   of `retention_audit.jsonl` and reload the ledger tab. **`unresolved`** - every
+   hash after the edited entry breaks. *"You cannot quietly rewrite what was
+   deleted."*
+
+**One-liner caption:**
+```
+Archive · delete · restore · purge - and a per-store receipt that says
+complete, partial, blocked or unresolved
+```
+
+**Speaker note:** *"The challenge asked us to show whether the work is complete,
+partial, blocked or unresolved. All four are reachable in this demo, and none of
+them is a hard-coded string - each one is computed from what actually happened in
+each store."*
+
+**Fallback:** the whole feature is local files. No network, no LLM, no Docker.
+
+---
+
 ### Slide 7 - LIVE DEMO 2: ExamGuard
 **Visual:** Two browser windows side by side (or recording).
 
@@ -269,7 +319,7 @@ Backend            FastAPI · Python 3.11 / 3.12
 Static Analysis    Semgrep · Bandit
 Real-time          WebSocket (native browser API)
 Frontend           Next.js 14 · TypeScript · Tailwind CSS
-Quality            285 tests · 6-job CI on every push and tag
+Quality            332 tests · 6-job CI on every push and tag
 Release            v1.0.0, tagged and CI-verified · public repo
 ```
 
@@ -287,7 +337,7 @@ Shipped since round 1
 ☑ Multi-student exam dashboard (invigilator sees the whole class)
 ☑ Deterministic risk scoring - the model no longer sets the number
 ☑ Authorised-targets guard on port scanning
-☑ 285 tests + 6-job CI, green on every push and tag
+☑ 332 tests + 6-job CI, green on every push and tag
 ☑ v1.0.0 tagged and released
 
 Next 30 days (engineering, not ideas)
@@ -365,6 +415,30 @@ Port scanning refuses unless the host is in `AUTHORISED_SCAN_TARGETS`, which is 
 
 **"What happens if the internet or the API key fails mid-demo?"**
 It falls back to a local Ollama model automatically. A missing key is covered by a CI job that boots the API with no key and asserts it still answers.
+
+**"Is the retention feature actually wired up, or is it a UI?"**
+Delete a scan and it leaves `/api/scans/history`, the history page and the trend
+comparison. Archive one and its findings move out of `scan_history.json` into a
+separate file on disk - show both files in a terminal. Purge one and hit Verify:
+the tool re-reads every store and reports what is really there. Offer to let them
+pick which scan.
+
+**"Why does your delete say partial instead of complete?"**
+Because the findings are still on disk so the delete can be undone. Complete
+would be a false claim. Purge is the operation that reports complete, and only
+after the payload, the cold copy, the clone workspace and the in-memory session
+are all gone.
+
+**"What if I want the data really gone for compliance?"**
+`purge?mode=full` removes the row entirely. What remains is a tombstone in the
+ledger: the scan id, the domain and a SHA-256 of the payload. It proves the
+erasure happened without keeping any of what was erased. That is why the receipt
+marks it `retained_by_policy` rather than counting it against the result.
+
+**"Could someone delete a scan and cover their tracks?"**
+The ledger is append-only and hash-chained - each entry carries the hash of the
+one before it. Edit or remove any past entry and every hash after it breaks,
+which the ledger tab reports as `unresolved`. Offer to demonstrate it live.
 
 **"How much of this did AI write?"**
 Answer plainly and move on. The judgeable artefact is the engineering: what the tool refuses to claim, what it does when the model is wrong, and the tests that pin both.

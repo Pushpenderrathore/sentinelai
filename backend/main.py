@@ -7,6 +7,22 @@ WS   /ws/{scan_id}          Stream real-time agent logs
 GET  /api/report/{scan_id}  Fetch completed report JSON
 GET  /api/scans             List all scans
 
+── Retention (data lifecycle) ────────────────────────────────
+Every destructive operation returns a receipt: one result per store plus a
+single outcome of complete | partial | blocked | unresolved.
+
+GET    /api/retention/policy               Schedule, state counts, ledger health
+GET    /api/retention/scans                Inventory with state, hold and next due action
+POST   /api/retention/scans/{id}/archive   Offload findings to the cold archive
+POST   /api/retention/scans/{id}/restore   Undo a trash, rehydrate an archive
+POST   /api/retention/scans/{id}/trash     Reversible delete
+POST   /api/retention/scans/{id}/purge     Irreversible erasure (?mode=full|payload)
+POST   /api/retention/scans/{id}/hold      Legal hold; blocks every destructive step
+DELETE /api/retention/scans/{id}/hold      Release the hold
+GET    /api/retention/scans/{id}/verify    Re-check every store for residue
+POST   /api/retention/sweep                Apply the policy (?dry_run, ?as_of)
+GET    /api/retention/audit                Hash-chained ledger of every operation
+
 ── ExamGuard (exam integrity) ────────────────────────────────
 POST /api/exam/session          Create exam session; returns exam_id + ws_url
 WS   /ws/exam/{exam_id}         Bidirectional: browser sends events → server sends immediate alerts
@@ -52,7 +68,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from agents.orchestrator import _graph, _initial_state
 from tools.url_guard import assert_safe_target, UnsafeTargetError
-from tools.git_cloner import cleanup_repo
+from tools.git_cloner import cleanup_repo, _repo_dest
+from tools import retention as rt
 from exam_agents.exam_pipeline import _exam_graph, stream_exam_analysis
 from exam_agents.exam_state import ExamSession
 from exam_agents.event_rules import (
@@ -80,9 +97,22 @@ def _load_history() -> list[dict]:
         return []
 
 
+def _write_history(records: list[dict]) -> None:
+    _HISTORY_FILE.write_text(json.dumps(records, indent=2))
+
+
 async def _save_history(records: list[dict]) -> None:
     async with _history_lock:
-        _HISTORY_FILE.write_text(json.dumps(records, indent=2))
+        _write_history(records)
+
+
+def _visible_history() -> list[dict]:
+    """
+    History as the product shows it: trashed scans are gone from listings,
+    trends and comparisons until they are restored.
+    """
+    return [r for r in _load_history()
+            if rt.lifecycle_of(r).get("state") != rt.STATE_TRASHED]
 
 
 async def _append_scan_history(scan_id: str, repo_url: str, report: dict, started_at: float) -> None:
@@ -102,6 +132,7 @@ async def _append_scan_history(scan_id: str, repo_url: str, report: dict, starte
 
     record = {
         "scan_id":         scan_id,
+        "lifecycle":       rt.default_lifecycle(started_at),
         "domain":          domain,
         "repo_url":        repo_url,
         "scan_date":       time.strftime("%Y-%m-%d", time.gmtime(started_at)),
@@ -144,6 +175,19 @@ _exam_sessions: Dict[str, dict] = {}   # ExamGuard sessions
 # connects mid-exam immediately sees every active student).
 _global_monitor_queues: List[asyncio.Queue] = []
 _latest_trust: Dict[str, dict] = {}    # exam_id → last trust_update payload
+
+# ── Retention / data lifecycle ────────────────────────────────
+_ARCHIVE_DIR = Path(os.getenv("RETENTION_ARCHIVE_DIR", "retention_archive"))
+_AUDIT_FILE = Path(os.getenv("RETENTION_AUDIT_FILE", "retention_audit.jsonl"))
+
+_retention = rt.RetentionStore(
+    load_records=_load_history,
+    save_records=_write_history,
+    archive_dir=_ARCHIVE_DIR,
+    ledger=rt.AuditLedger(_AUDIT_FILE),
+    live_sessions=_scans,
+    workspace_for=_repo_dest,
+)
 
 
 async def _broadcast_global(msg: dict) -> None:
@@ -360,14 +404,14 @@ async def list_scans() -> list[ScanSummary]:
 
 @app.get("/api/scans/history")
 async def list_scan_history() -> list[dict]:
-    """Return all completed scans from history, newest first."""
-    return _load_history()
+    """Return all completed scans from history, newest first. Trashed scans are excluded."""
+    return _visible_history()
 
 
 @app.get("/api/scans/history/domains")
 async def list_history_domains() -> list[dict]:
     """Return one summary entry per unique domain, newest scan first."""
-    records = _load_history()
+    records = _visible_history()
     seen: dict[str, dict] = {}
     for r in records:                          # records are newest-first
         d = r.get("domain", r.get("repo_url", ""))
@@ -394,7 +438,7 @@ async def list_history_domains() -> list[dict]:
 @app.get("/api/scans/history/domain/{domain:path}")
 async def get_domain_history(domain: str) -> list[dict]:
     """Return all scans for one domain, newest first (full records)."""
-    records = _load_history()
+    records = _visible_history()
     result = [r for r in records if r.get("domain", "") == domain]
     if not result:
         raise HTTPException(status_code=404, detail="No scans found for this domain")
@@ -404,7 +448,7 @@ async def get_domain_history(domain: str) -> list[dict]:
 @app.get("/api/scans/history/compare/{scan_a}/{scan_b}")
 async def compare_scans(scan_a: str, scan_b: str) -> dict:
     """Compare two scans (scan_a = older, scan_b = newer)."""
-    records = _load_history()
+    records = _visible_history()
     by_id = {r["scan_id"]: r for r in records}
     a = by_id.get(scan_a)
     b = by_id.get(scan_b)
@@ -447,21 +491,129 @@ async def compare_scans(scan_a: str, scan_b: str) -> dict:
 @app.get("/api/scans/history/{scan_id}")
 async def get_scan_history(scan_id: str) -> dict:
     """Return full details of one historical scan."""
-    for record in _load_history():
+    for record in _visible_history():
         if record.get("scan_id") == scan_id:
             return record
     raise HTTPException(status_code=404, detail="Scan not found in history")
 
 
-@app.delete("/api/scans/history/{scan_id}", status_code=204)
-async def delete_scan_history(scan_id: str) -> None:
-    """Remove one scan from history."""
+@app.delete("/api/scans/history/{scan_id}")
+async def delete_scan_history(scan_id: str) -> dict:
+    """
+    Reversible delete. The scan leaves every listing immediately but its data
+    is retained until the trash window expires, so this reports `partial`
+    rather than `complete`. Purge is what erases it.
+    """
+    return await _lifecycle_op(_retention.trash, scan_id)
+
+
+# ══════════════════════════════════════════════════════════════
+#  Retention / data lifecycle
+# ══════════════════════════════════════════════════════════════
+
+class HoldRequest(BaseModel):
+    reason: str = Field(default="", max_length=500)
+
+
+async def _lifecycle_op(fn, *args, **kwargs) -> dict:
+    """Run one lifecycle operation under the history lock and return its receipt."""
     async with _history_lock:
-        records = _load_history()
-        filtered = [r for r in records if r.get("scan_id") != scan_id]
-        if len(filtered) == len(records):
-            raise HTTPException(status_code=404, detail="Scan not found in history")
-        _HISTORY_FILE.write_text(json.dumps(filtered, indent=2))
+        try:
+            receipt = fn(*args, **kwargs)
+        except rt.RetentionError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+    return receipt.as_dict()
+
+
+@app.get("/api/retention/policy")
+async def retention_policy() -> dict:
+    """The active retention schedule and how many scans sit in each state."""
+    inv = _retention.inventory()
+    return {
+        "policy": inv["policy"],
+        "counts": inv["counts"],
+        "held": inv["held"],
+        "with_residue": inv["with_residue"],
+        "total": inv["total"],
+        "archive_files": inv["archive_files"],
+        "archive_bytes": inv["archive_bytes"],
+        "audit": _retention.ledger.verify(),
+    }
+
+
+@app.get("/api/retention/scans")
+async def retention_inventory(state: str | None = None) -> dict:
+    """Every scan with its lifecycle state, hold, residue and next due action."""
+    states = tuple(s.strip() for s in state.split(",")) if state else rt.ALL_STATES
+    return _retention.inventory(include_states=states)
+
+
+@app.post("/api/retention/scans/{scan_id}/archive")
+async def retention_archive(scan_id: str) -> dict:
+    return await _lifecycle_op(_retention.archive, scan_id)
+
+
+@app.post("/api/retention/scans/{scan_id}/restore")
+async def retention_restore(scan_id: str) -> dict:
+    return await _lifecycle_op(_retention.restore, scan_id)
+
+
+@app.post("/api/retention/scans/{scan_id}/trash")
+async def retention_trash(scan_id: str) -> dict:
+    return await _lifecycle_op(_retention.trash, scan_id)
+
+
+@app.post("/api/retention/scans/{scan_id}/purge")
+async def retention_purge(scan_id: str, mode: str | None = None) -> dict:
+    """
+    Irreversible erasure. mode=full removes everything; mode=payload erases the
+    findings but keeps the score row so the site's risk trend stays continuous.
+    """
+    if mode is not None and mode not in (rt.PURGE_FULL, rt.PURGE_PAYLOAD):
+        raise HTTPException(status_code=422,
+                            detail=f"mode must be {rt.PURGE_FULL} or {rt.PURGE_PAYLOAD}")
+    return await _lifecycle_op(_retention.purge, scan_id, mode)
+
+
+@app.post("/api/retention/scans/{scan_id}/hold")
+async def retention_place_hold(scan_id: str, req: HoldRequest) -> dict:
+    """Put the scan beyond reach of every destructive operation."""
+    return await _lifecycle_op(_retention.place_hold, scan_id, req.reason)
+
+
+@app.delete("/api/retention/scans/{scan_id}/hold")
+async def retention_release_hold(scan_id: str) -> dict:
+    return await _lifecycle_op(_retention.release_hold, scan_id)
+
+
+@app.get("/api/retention/scans/{scan_id}/verify")
+async def retention_verify(scan_id: str) -> dict:
+    """
+    Re-check every store for this scan and report what is actually there.
+    This answers the ledger with evidence rather than trusting it.
+    """
+    return _retention.verify(scan_id)
+
+
+@app.post("/api/retention/sweep")
+async def retention_sweep(dry_run: bool = True, as_of: float | None = None) -> dict:
+    """
+    Apply the retention policy. Defaults to a dry run; `as_of` evaluates the
+    schedule at a future timestamp so the whole plan can be seen at once.
+    """
+    if dry_run:
+        return _retention.sweep(as_of=as_of, dry_run=True)
+    async with _history_lock:
+        return _retention.sweep(as_of=as_of, dry_run=False)
+
+
+@app.get("/api/retention/audit")
+async def retention_audit(limit: int = 100, scan_id: str | None = None) -> dict:
+    """The hash-chained ledger of every lifecycle operation, newest first."""
+    return {
+        "verification": _retention.ledger.verify(),
+        "entries": _retention.ledger.read(limit=limit, scan_id=scan_id),
+    }
 
 
 @app.get("/health")
