@@ -145,7 +145,8 @@ the thresholds in `.env`. `POST /api/retention/sweep` defaults to a dry run, and
 without waiting for it. A sweep that archives four scans and is refused on a
 fifth reports `partial` and names the fifth.
 
-The console is at **`/retention`**.
+The console is at **`/retention`**. The stage script for demonstrating it, with every
+command verified end to end, is in [RUNBOOK.md](RUNBOOK.md).
 
 ---
 

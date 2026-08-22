@@ -5,6 +5,9 @@
 > Every number in this deck is one they can reproduce on the spot, and the slides that
 > matter most are 9 and 10: they answer "isn't this just an LLM wrapper?" with evidence
 > rather than adjectives.
+>
+> **Slide 6A is the round 2 challenge answer.** Its operational script, including pre-flight,
+> the exact commands and what to say at each beat, is in [RUNBOOK.md](RUNBOOK.md).
 
 ---
 
