@@ -242,3 +242,64 @@ export const triggerAnalysis = (exam_id: string) =>
 
 export const getExamReport = (exam_id: string) =>
   req<Record<string, unknown>>(`/api/exam/report/${exam_id}`)
+
+// ── OSIRIS OSINT enrichment ───────────────────────────────────
+// Proxied through the backend: osirisai.live sends no CORS headers, so the
+// browser cannot read a direct response. Nothing is requested until an
+// analyst opens the panel on a specific finding.
+
+export interface OsirisGeo {
+  country?:      string
+  country_code?: string
+  region?:       string
+  city?:         string
+  lat?:          number
+  lon?:          number
+  timezone?:     string
+  isp?:          string
+  org?:          string
+  as_number?:    string
+  as_name?:      string
+  is_mobile?:    boolean
+  is_proxy?:     boolean
+  is_hosting?:   boolean
+}
+
+export interface OsirisIpIntel {
+  ip:              string
+  fetched_at:      string
+  cached:          boolean
+  geo:             OsirisGeo | null
+  reputation:      { is_proxy?: boolean; is_hosting?: boolean; is_mobile?: boolean; risk_level?: string } | null
+  sanctions_match: unknown | null
+  exposure:        { ports: number[]; hostnames: string[]; cpes: string[]; vulns: string[]; tags: string[] } | null
+  threat:          { threat_level?: string; tor_exit_node?: boolean | null
+                     otx?: { reputation?: number; pulse_count?: number; country?: string; asn?: string } | null } | null
+  sources:         Record<string, string>
+  partial:         boolean
+  map_url:         string
+}
+
+export interface OsirisCveRecord {
+  id:           string
+  found:        boolean
+  cached:       boolean
+  fetched_at:   string
+  description?: string | null
+  cvss?:        number | string | null
+  cvss_vector?: string | null
+  severity?:    string | null
+  cwe?:         string | null
+  affected?:    { vendor?: string; product?: string; versions?: string[] }[]
+  references?:  string[]
+  published?:   string | null
+  modified?:    string | null
+  source?:      string | null
+  error?:       string
+}
+
+export const getOsirisIpIntel = (ip: string) =>
+  req<OsirisIpIntel>(`/api/osiris/ip/${encodeURIComponent(ip)}`)
+
+export const getOsirisCve = (cve_id: string) =>
+  req<OsirisCveRecord>(`/api/osiris/cve/${encodeURIComponent(cve_id)}`)

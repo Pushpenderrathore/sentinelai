@@ -887,6 +887,11 @@ def vuln_analyzer_node(state: ScanState) -> dict:
                 "service": f["service"],
                 "banner": f.get("banner", "—"),
                 "recommendation": f.get("recommendation", ""),
+                # Carried through so a report can be pivoted into OSINT without
+                # re-resolving the host — and so the UI knows not to offer that
+                # for a loopback address, which no external dataset describes.
+                "ip": f.get("ip"),
+                "loopback": f.get("loopback", False),
             })
 
     # Static analysis / HTTP findings go through the LLM. Only the first slice

@@ -23,6 +23,12 @@ GET    /api/retention/scans/{id}/verify    Re-check every store for residue
 POST   /api/retention/sweep                Apply the policy (?dry_run, ?as_of)
 GET    /api/retention/audit                Hash-chained ledger of every operation
 
+── OSIRIS (OSINT enrichment) ─────────────────────────────────
+On-demand only: nothing reaches osirisai.live until a report is clicked.
+
+GET  /api/osiris/ip/{ip}        Geolocation, ASN, reputation, exposed services
+GET  /api/osiris/cve/{cve_id}   Upstream record for a single CVE id
+
 ── ExamGuard (exam integrity) ────────────────────────────────
 POST /api/exam/session          Create exam session; returns exam_id + ws_url
 WS   /ws/exam/{exam_id}         Bidirectional: browser sends events → server sends immediate alerts
@@ -71,6 +77,7 @@ from agents.llm_router import LLMUnavailableError
 from tools.url_guard import assert_safe_target, UnsafeTargetError
 from tools.git_cloner import cleanup_repo, _repo_dest
 from tools import retention as rt
+from tools import osiris
 from exam_agents.exam_pipeline import _exam_graph, stream_exam_analysis
 from exam_agents.exam_state import ExamSession
 from exam_agents.event_rules import (
@@ -640,6 +647,38 @@ async def retention_audit(limit: int = 100, scan_id: str | None = None) -> dict:
     }
 
 
+# ══════════════════════════════════════════════════════════════
+#  OSIRIS OSINT enrichment
+# ══════════════════════════════════════════════════════════════
+#
+# The browser cannot call OSIRIS directly — it sends no CORS headers — and
+# routing the lookup through here keeps scan targets off the client. Nothing is
+# sent to OSIRIS until an analyst asks for a specific finding: these routes are
+# only reached by a click on a report.
+
+
+@app.get("/api/osiris/ip/{ip}")
+async def osiris_ip(ip: str) -> dict:
+    """Passive OSINT for one address: geolocation, ASN, reputation, exposure."""
+    try:
+        return await asyncio.to_thread(osiris.ip_intel, ip)
+    except osiris.OsirisDisabledError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/osiris/cve/{cve_id}")
+async def osiris_cve(cve_id: str) -> dict:
+    """The upstream record for one CVE id, or found=false if nothing carries it."""
+    try:
+        return await asyncio.to_thread(osiris.cve_record, cve_id)
+    except osiris.OsirisDisabledError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.get("/health")
 async def health() -> dict:
     from agents.llm_router import get_active_backend, get_system_profile
@@ -647,6 +686,7 @@ async def health() -> dict:
         "status": "ok",
         "version": app.version,
         "llm_backend": get_active_backend(),
+        "osiris_enabled": osiris.is_enabled(),
         "system_profile": get_system_profile(),
         "active_scans": sum(1 for s in _scans.values() if s["status"] not in ("done", "error")),
         "active_exam_sessions": sum(

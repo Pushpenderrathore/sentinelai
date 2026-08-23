@@ -1,3 +1,5 @@
+import OsirisPanel from "./OsirisPanel"
+
 interface Vulnerability {
   id: string
   file: string
@@ -13,6 +15,8 @@ interface Vulnerability {
   cwes?: string[]
   all_cves?: string[]
   recommendation?: string
+  ip?: string | null
+  loopback?: boolean
 }
 
 interface Patch {
@@ -33,6 +37,12 @@ const SEVERITY_PILL: Record<string, string> = {
 export default function VulnCard({ vuln, patch }: { vuln: Vulnerability; patch?: Patch }) {
   const pill       = SEVERITY_PILL[vuln.severity] ?? "pill-low"
   const isPortScan = vuln.id?.startsWith("PORT-")
+
+  // OSINT only makes sense for an address on the public internet. A loopback
+  // finding describes the machine that ran the scan, and no external dataset
+  // has anything to say about it — offering the pivot there would be a button
+  // that always fails.
+  const canPivot = !!vuln.ip && !vuln.loopback
 
   // A patch only has a meaningful code diff for source-code findings. Header/
   // port/config issues come back with empty code (or a "No code provided…"
@@ -122,6 +132,9 @@ export default function VulnCard({ vuln, patch }: { vuln: Vulnerability; patch?:
               {vuln.recommendation}
             </p>
           )}
+
+          {/* OSINT pivot — nothing is requested until this is opened */}
+          {canPivot && <OsirisPanel ip={vuln.ip as string} cve={vuln.cve} />}
         </div>
       )}
 

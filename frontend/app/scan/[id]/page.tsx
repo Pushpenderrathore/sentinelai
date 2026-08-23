@@ -18,7 +18,7 @@ const SEV_COLORS: Record<string, string> = {
   LOW:      "text-blue-400",
 }
 
-interface Vuln  { id: string; file: string; line: number; severity: string; category: string; description: string; cve?: string | null }
+interface Vuln  { id: string; file: string; line: number; severity: string; category: string; description: string; cve?: string | null; ip?: string | null; loopback?: boolean }
 interface Patch { vuln_id: string; file: string; original_code: string; patched_code: string; explanation: string }
 interface Report {
   repo_url: string

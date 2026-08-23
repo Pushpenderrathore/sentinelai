@@ -19,6 +19,7 @@ SentinelAI is a multi-agent AI platform that detects threats autonomously - in *
 - [Modules](#modules)
 - [Why the findings can be trusted](#why-the-findings-can-be-trusted)
 - [Data retention](#data-retention)
+- [OSINT enrichment (OSIRIS)](#osint-enrichment-osiris)
 - [ML Integration](#ml-integration)
 - [Demo](#demo)
 - [VulnSentinel - Screenshots](#-vulnsentinel---screenshots)
@@ -153,6 +154,51 @@ fifth reports `partial` and names the fifth.
 
 The console is at **`/retention`**. The stage script for demonstrating it, with every
 command verified end to end, is in [RUNBOOK.md](RUNBOOK.md).
+
+---
+
+## OSINT enrichment (OSIRIS)
+
+A scan tells you a port is open and which CVEs the service is associated with.
+It does not tell you *whose* machine it is, whether the address is already
+known to threat intelligence, or what else is exposed on it. Those are the
+first questions asked when a finding is triaged, and they were being answered
+by copying the address into another tool.
+
+Every port finding on a public address now carries a **Check IP on OSIRIS**
+button. Opening it returns, in the report:
+
+| | |
+|---|---|
+| **Ownership** | City and country, ASN, network owner, ISP |
+| **Reputation** | Risk level, hosting/proxy classification, sanctions-list match |
+| **Threat intel** | Threat level, Tor exit-node status, AlienVault OTX pulse count |
+| **Exposure** | Ports, hostnames and known vulnerabilities visible on the address from outside |
+| **CVE record** | The upstream entry for the CVE named in the finding: description, CWE, publication date, primary reference |
+
+[OSIRIS](https://osirisai.live) is an open-source intelligence platform that
+aggregates aviation, maritime, seismic, conflict, cyber and OSINT feeds onto a
+single map, and exposes every one of them as a keyless HTTP endpoint. SentinelAI
+uses four of them: `/api/osint/ip`, `/api/osint/shodan`, `/api/osint/threats`
+and `/api/osint/cve`. No account, no API key.
+
+**What is and is not sent.** Nothing reaches osirisai.live when a report is
+opened, only when the panel on a specific finding is clicked. Only public
+addresses are sent: a loopback or RFC 1918 address describes the machine that
+ran the scan, has no external record, and is refused before any request is made,
+so the button is not offered on those findings at all. Results are cached for
+15 minutes, so a report opened repeatedly costs one lookup.
+
+**Only passive routes.** OSIRIS also publishes an active scanner and a
+`/api/osint/sweep` route, which generate traffic against whatever target they
+are given. SentinelAI does its own active scanning under its own authorisation
+checks and does not use those.
+
+Each of the three address lookups is independent, and one being down does not
+cost the other two: the panel shows what answered and names what did not.
+Set `OSIRIS_ENABLED=false` to remove the integration from the product. If scan
+targets must not leave your network, point `OSIRIS_URL` at your own instance:
+OSIRIS is MIT-licensed and self-hosts in three commands.
 
 ---
 
@@ -749,6 +795,17 @@ outcome of `complete`, `partial`, `blocked` or `unresolved`.
 `DELETE /api/scans/history/{id}` now routes into the lifecycle as a reversible
 delete and returns a receipt rather than a bare `204`.
 
+### OSIRIS enrichment
+
+On demand only: these are reached by a click on a report, never by a scan.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/osiris/ip/{ip}` | Geolocation, ASN, reputation, threat intel and exposed services for one address |
+| `GET` | `/api/osiris/cve/{cve_id}` | Upstream record for a single CVE · `found: false` when no dataset carries the id |
+
+A private or loopback address returns `422`; a disabled integration returns `503`.
+
 ### ExamGuard
 
 | Method | Endpoint | Description |
@@ -767,7 +824,7 @@ delete and returns a receipt rather than a bare `204`.
 ## Testing & CI
 
 ```bash
-cd backend && pytest          # 332 tests
+cd backend && pytest          # 390 tests
 ruff check .                  # lint
 ```
 

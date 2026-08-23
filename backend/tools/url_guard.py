@@ -79,3 +79,16 @@ def assert_safe_target(url: str) -> str:
             )
 
     return url
+
+
+def is_public_ip(ip: str) -> bool:
+    """
+    Public wrapper over the address classification the target guard uses.
+
+    Unlike the internal helper it never raises: anything that is not a parseable
+    address is simply not public.
+    """
+    try:
+        return _is_public_ip(ip)
+    except ValueError:
+        return False
