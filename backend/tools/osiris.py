@@ -131,11 +131,14 @@ def _get(path: str, params: dict) -> tuple[dict | None, str | None]:
     still returns whatever the other sources gave it.
     """
     url = f"{_base_url()}{path}"
+    # Resolved into a local first: bandit's B113 cannot see a timeout supplied
+    # by a call expression and reports the request as having none.
+    timeout = _timeout()
     try:
         resp = requests.get(
             url,
             params=params,
-            timeout=_timeout(),
+            timeout=timeout,
             headers={"User-Agent": "SentinelAI/1.0 (+https://github.com/enp7s0d/sentinelai)"},
         )
     except RequestException as exc:
